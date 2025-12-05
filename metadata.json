@@ -1,0 +1,7 @@
+{
+  "name": "Lanna Intel Platform",
+  "description": "A comprehensive tourism intelligence and OSINT dashboard for the Lanna Region of Thailand, integrating FlightRadar24, Shodan, Longdo Traffic, and OpenWeather APIs.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
