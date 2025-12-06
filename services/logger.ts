@@ -1,46 +1,46 @@
 
-export type LogLevel = 'info' | 'warn' | 'error' | 'debug';
+import { dbService, STORES } from './db';
+import { SystemAlert } from '../types';
 
-interface LogEntry {
-  timestamp: string;
-  level: LogLevel;
-  message: string;
-  meta?: any;
-}
+export type LogLevel = 'info' | 'warn' | 'error' | 'success' | 'debug';
 
 class LoggerService {
-  private logs: LogEntry[] = [];
-
-  private log(level: LogLevel, message: string, meta?: any) {
-    const entry: LogEntry = {
+  
+  private async persist(level: LogLevel, message: string, source: string = 'System', meta?: any) {
+    const entry: SystemAlert = {
+      id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
-      level,
+      level: level === 'debug' ? 'info' : level, // Normalize for UI
+      title: `${level.toUpperCase()} Event`,
       message,
+      source,
+      read: false,
       meta
     };
-    this.logs.push(entry);
-    
-    // Console Output with styling
+
+    // Console output for dev
     const styles = {
       info: 'color: #3b82f6',
       warn: 'color: #eab308',
       error: 'color: #ef4444',
+      success: 'color: #22c55e',
       debug: 'color: #a855f7'
     };
-    
     console.log(`%c[${level.toUpperCase()}] ${message}`, styles[level], meta || '');
-    
-    // In a real app, we might persist this to IndexedDB or send to a server here
+
+    // Persist to "Mongo" (IndexedDB)
+    try {
+        await dbService.add(STORES.ALERTS, entry);
+    } catch (e) {
+        console.error("Failed to persist log", e);
+    }
   }
 
-  info(message: string, meta?: any) { this.log('info', message, meta); }
-  warn(message: string, meta?: any) { this.log('warn', message, meta); }
-  error(message: string, meta?: any) { this.log('error', message, meta); }
-  debug(message: string, meta?: any) { this.log('debug', message, meta); }
-
-  getLogs() {
-    return this.logs;
-  }
+  info(message: string, source?: string, meta?: any) { this.persist('info', message, source, meta); }
+  warn(message: string, source?: string, meta?: any) { this.persist('warn', message, source, meta); }
+  error(message: string, source?: string, meta?: any) { this.persist('error', message, source, meta); }
+  success(message: string, source?: string, meta?: any) { this.persist('success', message, source, meta); }
+  debug(message: string, source?: string, meta?: any) { this.persist('debug', message, source, meta); }
 }
 
 export const logger = new LoggerService();

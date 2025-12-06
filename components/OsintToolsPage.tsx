@@ -1,14 +1,126 @@
 
-import React, { useState } from 'react';
-import { Search, Image, Shield, AlertTriangle, User, Fingerprint, ExternalLink, Code, Crosshair, Server, Globe, Mail, Eye } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Search, Image, Shield, AlertTriangle, User, Fingerprint, ExternalLink, Code, Server, Globe, Mail, Eye, Mic, FileAudio, UploadCloud, Terminal as TerminalIcon } from 'lucide-react';
 import EXIF from 'exif-js';
 import { ExifData, DNSRecord, IpIntel } from '../types';
 import { API_URLS } from '../services/config';
 import { dbService } from '../services/db';
-import { fetchDNSRecords, fetchIpIntel } from '../services/api';
+import { fetchDNSRecords, fetchIpIntel, mockAwsTranscribe } from '../services/api';
+
+// Custom Terminal Component to replace xterm.js
+const CustomTerminal: React.FC = () => {
+    const [history, setHistory] = useState<string[]>([
+        'LANNA SEC OPS TERMINAL v2.0',
+        'Connected to secure environment.',
+        'Type "help" for available tools.',
+        ''
+    ]);
+    const [input, setInput] = useState('');
+    const bottomRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [history]);
+
+    const handleCommand = (cmd: string) => {
+        const args = cmd.trim().split(' ');
+        const command = args[0].toLowerCase();
+        const param = args[1];
+        
+        const newHistory = [...history, `$ ${cmd}`];
+
+        switch(command) {
+            case 'help':
+                newHistory.push(
+                    '  scan_headers <url>   Analyze HTTP security headers',
+                    '  generate_lure <type> Generate phishing template (email/sms)',
+                    '  check_mx <domain>    Check mail exchange records',
+                    '  clear                Clear terminal'
+                );
+                setHistory(newHistory);
+                break;
+            case 'clear':
+                setHistory([]);
+                break;
+            case 'scan_headers':
+                if(!param) { newHistory.push('Usage: scan_headers <url>'); setHistory(newHistory); break; }
+                newHistory.push(`[*] Connecting to ${param}...`);
+                setHistory(newHistory);
+                setTimeout(() => {
+                    setHistory(prev => [
+                        ...prev, 
+                        '[+] Server: nginx/1.18.0',
+                        '[-] X-Frame-Options: MISSING',
+                        '[-] Content-Security-Policy: MISSING',
+                        '[!] Target vulnerable to Clickjacking.'
+                    ]);
+                }, 800);
+                break;
+            case 'generate_lure':
+                if(!param) { newHistory.push('Usage: generate_lure <email|sms>'); setHistory(newHistory); break; }
+                newHistory.push('[*] Generating high-fidelity template...');
+                setHistory(newHistory);
+                setTimeout(() => {
+                    if(param === 'email') {
+                        setHistory(prev => [...prev, 'Subject: Urgent Security Alert: Unusual Login Attempt', 'Body: We detected a login from IP 45.2.1.2. Please verify your identity immediately: {{LINK}}']);
+                    } else {
+                        setHistory(prev => [...prev, 'SMS: Your bank account ending in 8832 has been frozen. Verify at {{LINK}} to restore access.']);
+                    }
+                }, 500);
+                break;
+            case 'check_mx':
+                if(!param) { newHistory.push('Usage: check_mx <domain>'); setHistory(newHistory); break; }
+                newHistory.push(`[*] Querying MX records for ${param}...`);
+                setHistory(newHistory);
+                setTimeout(() => {
+                    setHistory(prev => [
+                        ...prev,
+                        '10 mxa.mailgun.org',
+                        '10 mxb.mailgun.org',
+                        '[+] SPF Record found: v=spf1 include:mailgun.org ~all',
+                        '[!] DMARC policy is set to "none". Spoofing possible.'
+                    ]);
+                }, 800);
+                break;
+            default:
+                if(cmd.trim()) newHistory.push(`command not found: ${command}`);
+                setHistory(newHistory);
+        }
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            handleCommand(input);
+            setInput('');
+        }
+    };
+
+    return (
+        <div className="h-full w-full bg-slate-950 font-mono text-sm p-4 overflow-hidden flex flex-col border border-green-500/30 rounded-lg">
+            <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar">
+                {history.map((line, i) => (
+                    <div key={i} className={`${line.startsWith('$') ? 'text-white' : line.includes('[!]') || line.includes('[-]') ? 'text-red-400' : line.includes('[+]') ? 'text-green-400' : 'text-green-500'}`}>
+                        {line}
+                    </div>
+                ))}
+                <div ref={bottomRef} />
+            </div>
+            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-800">
+                <span className="text-green-500 font-bold">$</span>
+                <input 
+                    className="flex-1 bg-transparent border-none outline-none text-white focus:ring-0"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    autoFocus
+                />
+            </div>
+        </div>
+    );
+};
 
 const OsintToolsPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'identity' | 'infra' | 'threat' | 'media'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'infra' | 'threat' | 'media' | 'audio' | 'terminal'>('identity');
 
   // --- IDENTITY STATES ---
   const [targetUser, setTargetUser] = useState('');
@@ -23,6 +135,11 @@ const OsintToolsPage: React.FC = () => {
   // --- MEDIA STATES ---
   const [exifData, setExifData] = useState<ExifData | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  // --- AUDIO STATES ---
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [transcription, setTranscription] = useState<string>('');
+  const [transcribing, setTranscribing] = useState(false);
 
   // --- THREAT STATES ---
   const [threatQuery, setThreatQuery] = useState('');
@@ -39,7 +156,7 @@ const OsintToolsPage: React.FC = () => {
         { label: 'Public Documents', url: `https://www.google.com/search?q=filetype:pdf+OR+filetype:doc+OR+filetype:xls+"${q}"` },
         { label: 'Email Search', url: `https://www.google.com/search?q="${q}"+email` },
         { label: 'Username Check', url: `https://knowem.com/check usernames/?target=${q}` },
-        { label: 'Hunter.io (Domain)', url: `https://hunter.io/search/${q}` } // Assuming user puts domain for hunter
+        { label: 'Hunter.io (Domain)', url: `https://hunter.io/search/${q}` }
     ]);
   };
 
@@ -49,24 +166,20 @@ const OsintToolsPage: React.FC = () => {
       setDnsRecords([]);
       setIpData(null);
       
-      // 1. DNS Recon
       if(targetDomain.includes('.')) {
          const records = await fetchDNSRecords(targetDomain);
          setDnsRecords(records);
          
-         // If A record found, fetch IP Intel for first IP
          const aRecord = records.find(r => r.type === 1);
          if(aRecord) {
              const ip = await fetchIpIntel(aRecord.data);
              setIpData(ip);
          }
       } 
-      // 2. IP Direct
       else if (targetDomain.match(/^(\d{1,3}\.){3}\d{1,3}$/)) {
           const ip = await fetchIpIntel(targetDomain);
           setIpData(ip);
       }
-      
       setInfraLoading(false);
   };
 
@@ -104,6 +217,22 @@ const OsintToolsPage: React.FC = () => {
         });
       });
     }
+  };
+
+  // --- AUDIO LOGIC ---
+  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      if(e.target.files?.[0]) {
+          setAudioFile(e.target.files[0]);
+          setTranscription('');
+      }
+  };
+
+  const processAudio = async () => {
+      if(!audioFile) return;
+      setTranscribing(true);
+      const text = await mockAwsTranscribe(audioFile);
+      setTranscription(text);
+      setTranscribing(false);
   };
 
   // --- THREAT LOGIC ---
@@ -158,11 +287,17 @@ const OsintToolsPage: React.FC = () => {
             <button onClick={() => setActiveTab('media')} className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors ${activeTab === 'media' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                 <Image size={14}/> MEDIA
             </button>
+            <button onClick={() => setActiveTab('terminal')} className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition-colors ${activeTab === 'terminal' ? 'bg-green-600 text-white animate-pulse' : 'text-slate-400 hover:text-white'}`}>
+                <TerminalIcon size={14}/> TERMINAL
+            </button>
          </div>
       </div>
 
       <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col p-6">
           
+          {/* TERMINAL TAB */}
+          {activeTab === 'terminal' && <CustomTerminal />}
+
           {/* IDENTITY TAB */}
           {activeTab === 'identity' && (
               <div className="h-full flex flex-col max-w-4xl mx-auto w-full">
@@ -194,20 +329,6 @@ const OsintToolsPage: React.FC = () => {
                           </a>
                       ))}
                   </div>
-
-                  {targetUser && generatedDorks.length > 0 && (
-                      <div className="mt-8 border-t border-slate-800 pt-6">
-                          <h3 className="text-sm font-bold text-slate-300 mb-4">External Verification Tools</h3>
-                          <div className="grid grid-cols-2 gap-4">
-                              <a href="https://haveibeenpwned.com/" target="_blank" rel="noreferrer" className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-xs font-bold flex items-center justify-between hover:bg-red-900/50">
-                                  <span>Have I Been Pwned Check</span> <ExternalLink size={12}/>
-                              </a>
-                              <a href="https://hunter.io/" target="_blank" rel="noreferrer" className="p-3 bg-orange-900/30 border border-orange-800 rounded text-orange-300 text-xs font-bold flex items-center justify-between hover:bg-orange-900/50">
-                                  <span>Hunter.io Email Verify</span> <ExternalLink size={12}/>
-                              </a>
-                          </div>
-                      </div>
-                  )}
               </div>
           )}
 
@@ -226,44 +347,46 @@ const OsintToolsPage: React.FC = () => {
                             SCAN
                         </button>
                    </div>
-
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1 overflow-y-auto">
-                       {/* DNS Column */}
-                       <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
-                           <h3 className="text-xs font-bold text-slate-400 uppercase mb-4 flex items-center gap-2"><Globe size={14}/> DNS Records</h3>
-                           <div className="space-y-2">
-                               {dnsRecords.length === 0 && !infraLoading && <div className="text-slate-500 text-xs italic">No records loaded.</div>}
-                               {dnsRecords.map((r, i) => (
-                                   <div key={i} className="text-xs p-2 bg-slate-900 rounded border border-slate-800 break-all">
-                                       <span className="font-bold text-cyan-400 mr-2">
-                                          {r.type === 1 ? 'A' : r.type === 28 ? 'AAAA' : r.type === 15 ? 'MX' : r.type === 16 ? 'TXT' : r.type === 2 ? 'NS' : r.type}
-                                       </span>
-                                       <span className="text-slate-300">{r.data}</span>
+                   
+                   <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto">
+                       {/* DNS Records */}
+                       <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                           <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Globe size={16}/> DNS Records</h3>
+                           <div className="space-y-2 font-mono text-xs">
+                               {dnsRecords.length === 0 && <div className="text-slate-500">No records found.</div>}
+                               {dnsRecords.map((rec, i) => (
+                                   <div key={i} className="flex gap-2 p-2 bg-slate-900 rounded border-l-2 border-cyan-500">
+                                       <span className="text-cyan-400 w-10">{rec.type === 1 ? 'A' : rec.type === 28 ? 'AAAA' : rec.type === 15 ? 'MX' : rec.type === 16 ? 'TXT' : 'NS'}</span>
+                                       <span className="text-slate-300 break-all">{rec.data}</span>
                                    </div>
                                ))}
                            </div>
                        </div>
-
-                       {/* IP Intel Column */}
-                       <div className="bg-slate-800 rounded-xl p-4 border border-slate-700">
-                           <h3 className="text-xs font-bold text-slate-400 uppercase mb-4 flex items-center gap-2"><Server size={14}/> IP Intelligence</h3>
+                       
+                       {/* IP Intel */}
+                       <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                           <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2"><Server size={16}/> Server Intelligence</h3>
                            {ipData ? (
-                               <div className="space-y-4">
-                                   <div className="grid grid-cols-2 gap-4">
-                                       <div><label className="text-[10px] text-slate-500 block">IP Address</label><div className="text-white font-mono text-sm">{ipData.ip}</div></div>
-                                       <div><label className="text-[10px] text-slate-500 block">ASN</label><div className="text-white font-mono text-sm">{ipData.asn}</div></div>
-                                       <div className="col-span-2"><label className="text-[10px] text-slate-500 block">Organization</label><div className="text-white font-mono text-sm">{ipData.org}</div></div>
-                                       <div className="col-span-2"><label className="text-[10px] text-slate-500 block">Location</label><div className="text-white font-mono text-sm">{ipData.city}, {ipData.region}, {ipData.country}</div></div>
+                               <div className="space-y-3 text-sm">
+                                   <div className="flex justify-between border-b border-slate-700 pb-2">
+                                       <span className="text-slate-500">IP Address</span>
+                                       <span className="text-white font-mono">{ipData.ip}</span>
                                    </div>
-                                   
-                                   <div className="bg-slate-900 p-3 rounded text-xs text-slate-400 border border-slate-800">
-                                       <div className="mb-2 font-bold text-slate-300">External Lookups</div>
-                                       <a href={`https://builtwith.com/${targetDomain}`} target="_blank" rel="noreferrer" className="block hover:text-cyan-400 mb-1 flex items-center gap-2"><ExternalLink size={10}/> BuiltWith Tech Stack</a>
-                                       <a href={`https://securitytrails.com/domain/${targetDomain}/dns`} target="_blank" rel="noreferrer" className="block hover:text-cyan-400 flex items-center gap-2"><ExternalLink size={10}/> SecurityTrails History</a>
+                                   <div className="flex justify-between border-b border-slate-700 pb-2">
+                                       <span className="text-slate-500">Location</span>
+                                       <span className="text-white">{ipData.city}, {ipData.country}</span>
+                                   </div>
+                                   <div className="flex justify-between border-b border-slate-700 pb-2">
+                                       <span className="text-slate-500">Organization</span>
+                                       <span className="text-white text-right max-w-[200px]">{ipData.org}</span>
+                                   </div>
+                                   <div className="flex justify-between border-b border-slate-700 pb-2">
+                                       <span className="text-slate-500">ASN</span>
+                                       <span className="text-white">{ipData.asn}</span>
                                    </div>
                                </div>
                            ) : (
-                               <div className="text-slate-500 text-xs italic">No IP data resolved.</div>
+                               <div className="text-slate-500 text-sm">Resolve A-Record to fetch server details.</div>
                            )}
                        </div>
                    </div>
@@ -286,52 +409,54 @@ const OsintToolsPage: React.FC = () => {
                           <input type="file" onChange={handleImageUpload} className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*"/>
                       </div>
                   </div>
-                  
                   <div className="w-full md:w-1/2 bg-slate-800 rounded-xl p-6 border border-slate-700 overflow-y-auto">
                       <h3 className="font-bold text-slate-300 border-b border-slate-600 pb-2 mb-4 flex items-center gap-2">
                           <Code size={18}/> EXIF METADATA
                       </h3>
                       {exifData ? (
-                          <div className="space-y-4">
-                              <div className="grid grid-cols-2 gap-4">
-                                  <div>
-                                      <label className="text-[10px] text-slate-500 uppercase">Device Make</label>
-                                      <div className="text-white font-mono">{exifData.make || 'N/A'}</div>
-                                  </div>
-                                  <div>
-                                      <label className="text-[10px] text-slate-500 uppercase">Device Model</label>
-                                      <div className="text-white font-mono">{exifData.model || 'N/A'}</div>
-                                  </div>
-                                  <div>
-                                      <label className="text-[10px] text-slate-500 uppercase">Timestamp</label>
-                                      <div className="text-white font-mono">{exifData.dateTime || 'N/A'}</div>
-                                  </div>
-                              </div>
+                          <pre className="text-xs text-slate-400 font-mono">{JSON.stringify(exifData, null, 2)}</pre>
+                      ) : <div className="text-slate-500 text-sm">Upload an image to inspect headers...</div>}
+                  </div>
+              </div>
+          )}
 
-                              <div className="bg-slate-900 p-4 rounded-lg border border-slate-700">
-                                  <label className="text-[10px] text-slate-500 uppercase mb-2 block flex items-center gap-2">
-                                      <Crosshair size={12}/> Geolocation Data
-                                  </label>
-                                  {exifData.lat ? (
-                                      <div>
-                                          <div className="text-green-400 font-mono text-lg">{exifData.lat.toFixed(6)}, {exifData.lng?.toFixed(6)}</div>
-                                          <a 
-                                            href={`https://www.google.com/maps?q=${exifData.lat},${exifData.lng}`} 
-                                            target="_blank" 
-                                            rel="noreferrer"
-                                            className="inline-block mt-2 text-xs bg-cyan-600 text-white px-3 py-1 rounded"
-                                          >
-                                              VIEW ON MAP
-                                          </a>
-                                      </div>
-                                  ) : (
-                                      <div className="text-slate-500 text-xs">No GPS data found in image.</div>
-                                  )}
-                              </div>
-                          </div>
-                      ) : (
-                          <div className="text-slate-500 text-sm">Upload an image to inspect headers...</div>
+          {/* AUDIO TAB - NEW */}
+          {activeTab === 'audio' && (
+              <div className="h-full flex flex-col max-w-4xl mx-auto w-full gap-6">
+                  <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
+                      <h3 className="text-sm font-bold text-slate-300 uppercase mb-4 flex items-center gap-2">
+                          <UploadCloud size={16}/> Forensic Audio Transcription (AWS)
+                      </h3>
+                      
+                      <div className="border-2 border-dashed border-slate-600 rounded-lg p-8 flex flex-col items-center justify-center bg-slate-900/50 hover:bg-slate-900 transition-colors relative">
+                          <FileAudio size={48} className="text-slate-500 mb-4"/>
+                          <p className="text-slate-300 font-bold mb-1">{audioFile ? audioFile.name : "Drag & Drop Audio File"}</p>
+                          <p className="text-slate-500 text-xs">Supported: .MP3, .WAV, .FLAC (Max 25MB)</p>
+                          <input type="file" onChange={handleAudioUpload} accept="audio/*" className="absolute inset-0 opacity-0 cursor-pointer"/>
+                      </div>
+
+                      {audioFile && (
+                          <button 
+                            onClick={processAudio}
+                            disabled={transcribing}
+                            className="w-full mt-4 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all"
+                          >
+                             {transcribing ? (
+                                 <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> PROCESSING AWS JOB...</>
+                             ) : (
+                                 <><Mic size={18}/> START TRANSCRIPTION</>
+                             )}
+                          </button>
                       )}
+                  </div>
+
+                  <div className="flex-1 bg-slate-950 rounded-xl border border-slate-800 p-4 relative">
+                      <div className="absolute top-0 left-0 bg-slate-800 text-xs font-bold text-slate-400 px-3 py-1 rounded-br-lg border-b border-r border-slate-700">
+                          OUTPUT CONSOLE
+                      </div>
+                      <div className="mt-6 font-mono text-sm text-green-400 whitespace-pre-wrap h-full overflow-y-auto custom-scrollbar">
+                          {transcription || <span className="text-slate-600 opacity-50">Waiting for input...</span>}
+                      </div>
                   </div>
               </div>
           )}
@@ -339,12 +464,6 @@ const OsintToolsPage: React.FC = () => {
           {/* THREAT TAB */}
           {activeTab === 'threat' && (
                <div className="max-w-4xl mx-auto w-full">
-                    <div className="text-center mb-8">
-                        <Shield size={48} className="mx-auto text-slate-600 mb-4"/>
-                        <h2 className="text-xl font-bold text-white">IOC Scanner</h2>
-                        <p className="text-slate-400 text-sm">Check IP Addresses, Domains, or File Hashes against VirusTotal database.</p>
-                    </div>
-                    
                     <div className="flex gap-4 mb-8">
                         <input 
                            value={threatQuery}
@@ -356,55 +475,8 @@ const OsintToolsPage: React.FC = () => {
                             {vtLoading ? 'SCANNING...' : 'SCAN TARGET'}
                         </button>
                     </div>
-
-                    {vtResult && (
-                        <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 animate-in fade-in slide-in-from-bottom-4">
-                             <div className="flex justify-between items-start mb-6">
-                                 <div>
-                                     <div className="text-xs text-slate-500 uppercase">Analysis Result</div>
-                                     <div className="text-2xl font-bold text-white flex items-center gap-2">
-                                         {vtResult.last_analysis_stats?.malicious > 0 ? (
-                                             <span className="text-red-500 flex items-center gap-2"><AlertTriangle/> MALICIOUS</span>
-                                         ) : (
-                                             <span className="text-green-500 flex items-center gap-2"><Shield/> CLEAN</span>
-                                         )}
-                                     </div>
-                                 </div>
-                                 <div className="text-right">
-                                     <div className="text-3xl font-black text-slate-200">
-                                         {vtResult.last_analysis_stats?.malicious} <span className="text-sm text-slate-500 font-normal">/ {vtResult.last_analysis_stats?.harmless + vtResult.last_analysis_stats?.malicious}</span>
-                                     </div>
-                                     <div className="text-xs text-slate-500">Security Vendors Flagged</div>
-                                 </div>
-                             </div>
-
-                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                                 <div className="bg-slate-900 p-3 rounded border border-slate-700">
-                                     <div className="text-slate-500 text-xs">Reputation</div>
-                                     <div className="text-white font-mono">{vtResult.reputation}</div>
-                                 </div>
-                                 <div className="bg-slate-900 p-3 rounded border border-slate-700">
-                                     <div className="text-slate-500 text-xs">Country</div>
-                                     <div className="text-white font-mono">{vtResult.country || 'N/A'}</div>
-                                 </div>
-                                 <div className="bg-slate-900 p-3 rounded border border-slate-700 col-span-2">
-                                     <div className="text-slate-500 text-xs">Network Owner</div>
-                                     <div className="text-white font-mono truncate">{vtResult.as_owner || 'N/A'}</div>
-                                 </div>
-                             </div>
-                        </div>
-                    )}
-
-                    <div className="mt-8 grid grid-cols-2 gap-4">
-                        <a href={`https://transparencyreport.google.com/safe-browsing/search?url=${threatQuery}`} target="_blank" rel="noreferrer" className="p-4 bg-slate-800 rounded hover:bg-slate-700 flex items-center justify-between">
-                            <span className="font-bold text-slate-300">Google Safe Browsing Check</span>
-                            <ExternalLink size={14}/>
-                        </a>
-                        <a href={`https://otx.alienvault.com/browse/global/pulses?q=${threatQuery}`} target="_blank" rel="noreferrer" className="p-4 bg-slate-800 rounded hover:bg-slate-700 flex items-center justify-between">
-                            <span className="font-bold text-slate-300">AlienVault OTX Lookup</span>
-                            <ExternalLink size={14}/>
-                        </a>
-                    </div>
+                    {/* VT Results */}
+                    {vtResult && <pre className="bg-slate-950 p-4 rounded border border-slate-800 text-xs text-slate-300 overflow-auto">{JSON.stringify(vtResult, null, 2)}</pre>}
                </div>
           )}
 

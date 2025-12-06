@@ -1,9 +1,10 @@
 
+
 // Simple IndexedDB wrapper to act as our "MongoDB" for local persistence
 // This reduces API calls and stores historical data/tasks.
 
 const DB_NAME = 'LannaIntelDB';
-const DB_VERSION = 2; // Incremented for Settings Store
+const DB_VERSION = 5; // Incremented for Map Vector Stores
 
 export const STORES = {
   FLIGHTS: 'flights_history',
@@ -11,7 +12,12 @@ export const STORES = {
   TASKS: 'tasks',
   CACHE_META: 'api_cache_meta',
   SETTINGS: 'app_settings',
-  RECORDINGS: 'audio_recordings'
+  RECORDINGS: 'audio_recordings',
+  OFFLINE_DATA: 'offline_region_data', // Legacy Blob Store
+  ALERTS: 'system_alerts',
+  // New Vector Stores
+  MAP_FEATURES: 'map_features',
+  MAP_VERSIONS: 'map_versions'
 };
 
 const openDB = (): Promise<IDBDatabase> => {
@@ -41,6 +47,22 @@ const openDB = (): Promise<IDBDatabase> => {
       }
       if (!db.objectStoreNames.contains(STORES.RECORDINGS)) {
         db.createObjectStore(STORES.RECORDINGS, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(STORES.OFFLINE_DATA)) {
+        db.createObjectStore(STORES.OFFLINE_DATA, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(STORES.ALERTS)) {
+        db.createObjectStore(STORES.ALERTS, { keyPath: 'id' });
+      }
+      // New: Optimized Vector Store
+      if (!db.objectStoreNames.contains(STORES.MAP_FEATURES)) {
+          const featureStore = db.createObjectStore(STORES.MAP_FEATURES, { keyPath: 'id' });
+          featureStore.createIndex('region', 'region', { unique: false });
+          featureStore.createIndex('category', 'category', { unique: false });
+      }
+      // New: Version Control Store
+      if (!db.objectStoreNames.contains(STORES.MAP_VERSIONS)) {
+          db.createObjectStore(STORES.MAP_VERSIONS, { keyPath: 'region' });
       }
     };
   });
@@ -121,5 +143,74 @@ export const dbService = {
     const transaction = db.transaction(STORES.CACHE_META, 'readwrite');
     const store = transaction.objectStore(STORES.CACHE_META);
     store.put({ key, timestamp: Date.now() });
+  },
+
+  async getOfflineData(key: string): Promise<any | null> {
+      const db = await openDB();
+      return new Promise((resolve) => {
+          const transaction = db.transaction(STORES.OFFLINE_DATA, 'readonly');
+          const store = transaction.objectStore(STORES.OFFLINE_DATA);
+          const request = store.get(key);
+          request.onsuccess = () => resolve(request.result ? request.result.value : null);
+          request.onerror = () => resolve(null);
+      });
+  },
+  
+  // Alerts specific helpers
+  async markAlertRead(id: string): Promise<void> {
+    const db = await openDB();
+    const transaction = db.transaction(STORES.ALERTS, 'readwrite');
+    const store = transaction.objectStore(STORES.ALERTS);
+    const getReq = store.get(id);
+    
+    getReq.onsuccess = () => {
+       const data = getReq.result;
+       if(data) {
+           data.read = true;
+           store.put(data);
+       }
+    };
+  },
+
+  async markAllAlertsRead(): Promise<void> {
+      const db = await openDB();
+      const transaction = db.transaction(STORES.ALERTS, 'readwrite');
+      const store = transaction.objectStore(STORES.ALERTS);
+      const request = store.getAll();
+      
+      request.onsuccess = () => {
+          const alerts = request.result;
+          alerts.forEach((alert: any) => {
+              if(!alert.read) {
+                  alert.read = true;
+                  store.put(alert);
+              }
+          });
+      };
+  },
+
+  // Map Feature Helpers
+  async getFeaturesByRegion(region: string): Promise<any[]> {
+      const db = await openDB();
+      return new Promise((resolve) => {
+          const tx = db.transaction(STORES.MAP_FEATURES, 'readonly');
+          const index = tx.objectStore(STORES.MAP_FEATURES).index('region');
+          const request = index.getAll(region);
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => resolve([]);
+      });
+  },
+
+  async batchAddFeatures(features: any[]): Promise<void> {
+      const db = await openDB();
+      const tx = db.transaction(STORES.MAP_FEATURES, 'readwrite');
+      const store = tx.objectStore(STORES.MAP_FEATURES);
+      
+      features.forEach(f => store.put(f));
+      
+      return new Promise((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject();
+      });
   }
 };

@@ -1,50 +1,82 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, Navigation, MapPin, AlertTriangle, VideoOff } from 'lucide-react';
+import { Camera, Navigation, MapPin, AlertTriangle, VideoOff, RefreshCw, Layers, EyeOff, Globe } from 'lucide-react';
 import { fetchInfrastructure, fetchTrafficIncidents } from '../services/api';
 import { REGION_CENTER } from '../services/config';
 import { ARObject } from '../types';
 
 const ARIntelPage: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [permissionState, setPermissionState] = useState<'granted' | 'denied' | 'prompt' | 'error'>('prompt');
+  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [simulationMode, setSimulationMode] = useState(false);
+  
   const [userLoc, setUserLoc] = useState<{lat: number, lng: number} | null>(null);
   const [heading, setHeading] = useState<number>(0);
   const [poiList, setPoiList] = useState<ARObject[]>([]);
   
-  // Initialize Camera
-  useEffect(() => {
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment' } 
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-        setHasPermission(true);
-      } catch (err) {
-        console.error("Camera Error", err);
-        setHasPermission(false);
-      }
-    };
-    startCamera();
+  const startCamera = async () => {
+    setPermissionState('prompt');
+    setErrorMsg('');
+    
+    // Check for Secure Context (HTTPS) - Required for getUserMedia
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+        setPermissionState('error');
+        setErrorMsg('Browser blocks Camera on insecure (HTTP) connections. Use HTTPS.');
+        return;
+    }
 
-    // Cleanup
+    try {
+      // 1. Try Environment Camera (Rear)
+      try {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+              video: { facingMode: 'environment' } 
+          });
+          if (videoRef.current) videoRef.current.srcObject = stream;
+          setPermissionState('granted');
+      } catch (envErr) {
+          // 2. Fallback to any camera (Desktop/Laptop)
+          console.warn("Environment camera failed, trying default user camera...", envErr);
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          if (videoRef.current) videoRef.current.srcObject = stream;
+          setPermissionState('granted');
+      }
+    } catch (err: any) {
+      console.error("Camera Error", err);
+      setPermissionState('denied');
+      
+      if (err.name === 'NotAllowedError') {
+          setErrorMsg('Permission denied by user.');
+      } else if (err.name === 'NotFoundError') {
+          setErrorMsg('No camera device found.');
+      } else {
+          setErrorMsg(err.message || 'Unknown camera error.');
+      }
+    }
+  };
+
+  // Initialize Camera on Mount
+  useEffect(() => {
+    if (!simulationMode) {
+        startCamera();
+    }
+    
     return () => {
         if(videoRef.current && videoRef.current.srcObject) {
             const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
             tracks.forEach(track => track.stop());
         }
     };
-  }, []);
+  }, [simulationMode]);
 
   // Location & Orientation
   useEffect(() => {
+    if (!navigator.geolocation) return;
+
     // Geolocation
-    navigator.geolocation.watchPosition(
+    const geoWatch = navigator.geolocation.watchPosition(
         (pos) => setUserLoc({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        (err) => console.error(err),
+        (err) => console.error("Geo Error", err),
         { enableHighAccuracy: true }
     );
 
@@ -60,18 +92,19 @@ const ARIntelPage: React.FC = () => {
         }
     };
     
-    // Note: Request permission for iOS 13+ might be needed in a real click handler
     window.addEventListener('deviceorientation', handleOrientation);
-    return () => window.removeEventListener('deviceorientation', handleOrientation);
+    return () => {
+        navigator.geolocation.clearWatch(geoWatch);
+        window.removeEventListener('deviceorientation', handleOrientation);
+    };
   }, []);
 
   // Load POIs based on location
   useEffect(() => {
-    if (!userLoc) return;
+    // If no user loc, default to Region Center for demo purposes
+    const center = userLoc || REGION_CENTER;
 
     const loadPOIs = async () => {
-        // Fetch surrounding data
-        // For demo, we are fetching the same Lanna region data but in real app would be bbox around userLoc
         const [traffic, infra] = await Promise.all([
             fetchTrafficIncidents(),
             fetchInfrastructure()
@@ -85,7 +118,7 @@ const ARIntelPage: React.FC = () => {
                 lat: t.lat,
                 lng: t.lng,
                 title: t.title,
-                type: 'infra', // treating traffic as infra for simplicity
+                type: 'infra', 
                 distance: 0,
                 bearing: 0
             });
@@ -105,10 +138,10 @@ const ARIntelPage: React.FC = () => {
 
         // Calculate relative bearing and distance
         const updated = arObjects.map(obj => {
-            const dist = getDistance(userLoc.lat, userLoc.lng, obj.lat, obj.lng);
-            const bear = getBearing(userLoc.lat, userLoc.lng, obj.lat, obj.lng);
+            const dist = getDistance(center.lat, center.lng, obj.lat, obj.lng);
+            const bear = getBearing(center.lat, center.lng, obj.lat, obj.lng);
             return { ...obj, distance: dist, bearing: bear };
-        }).filter(obj => obj.distance < 5000); // Only show within 5km
+        }).filter(obj => obj.distance < 10000); // Increased range to 10km for demo
 
         setPoiList(updated);
     };
@@ -133,20 +166,19 @@ const ARIntelPage: React.FC = () => {
     const y = Math.sin(destLng - startLng) * Math.cos(destLat);
     const x = Math.cos(startLat) * Math.sin(destLat) - Math.sin(startLat) * Math.cos(destLat) * Math.cos(destLng - startLng);
     const brng = Math.atan2(y, x);
-    return (brng * 180 / Math.PI + 360) % 360; // to degrees
+    return (brng * 180 / Math.PI + 360) % 360; 
   };
 
   return (
-    <div className="h-full w-full bg-black relative overflow-hidden">
-        {/* Camera Feed */}
-        {hasPermission === false ? (
-            <div className="absolute inset-0 flex items-center justify-center text-slate-500 flex-col gap-4">
-                <VideoOff size={48}/>
-                <p>Camera Access Denied or Unavailable.</p>
-                <p className="text-xs">Ensure you are using HTTPS on a mobile device.</p>
+    <div className="h-full w-full bg-black relative overflow-hidden flex flex-col items-center justify-center">
+        
+        {/* Background Layer */}
+        {simulationMode ? (
+            <div className="absolute inset-0 bg-[linear-gradient(rgba(0,255,0,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,0,0.05)_1px,transparent_1px)] bg-[size:40px_40px] z-0">
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black opacity-80"></div>
             </div>
         ) : (
-            <video 
+             <video 
                 ref={videoRef} 
                 autoPlay 
                 playsInline 
@@ -155,60 +187,139 @@ const ARIntelPage: React.FC = () => {
             />
         )}
 
-        {/* HUD Overlay */}
-        <div className="absolute inset-0 z-10 pointer-events-none">
-            {/* Header / Compass Strip */}
-            <div className="bg-gradient-to-b from-black/80 to-transparent p-4 flex justify-between items-start">
-                <div>
-                    <h1 className="text-xl font-black text-white flex items-center gap-2 drop-shadow-md">
-                        <Camera className="text-green-500" size={24}/> AR <span className="text-green-500">RECON</span>
-                    </h1>
-                    <div className="text-xs text-green-400 font-mono mt-1 flex gap-4">
-                        <span>HDG: {Math.round(heading)}°</span>
-                        <span>LAT: {userLoc?.lat.toFixed(4) || '...'}</span>
-                        <span>LNG: {userLoc?.lng.toFixed(4) || '...'}</span>
+        {/* Error / Permission State Overlay */}
+        {!simulationMode && (permissionState === 'denied' || permissionState === 'error') && (
+            <div className="absolute inset-0 z-50 bg-slate-950/90 flex flex-col items-center justify-center p-8 text-center animate-in fade-in">
+                <div className="bg-red-500/10 p-4 rounded-full mb-4 border border-red-500/50">
+                    <VideoOff size={48} className="text-red-500"/>
+                </div>
+                <h2 className="text-2xl font-black text-white mb-2">OPTICAL SENSORS OFFLINE</h2>
+                <p className="text-slate-400 mb-6 max-w-sm">
+                    {errorMsg || "Camera access is unavailable. Check browser permissions or device capabilities."}
+                </p>
+                
+                <div className="flex flex-col gap-3 w-full max-w-xs">
+                    <button 
+                        onClick={() => startCamera()}
+                        className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-lg border border-slate-600 flex items-center justify-center gap-2 transition-colors"
+                    >
+                        <RefreshCw size={16}/> RETRY UPLINK
+                    </button>
+                    <button 
+                        onClick={() => setSimulationMode(true)}
+                        className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-[0_0_20px_rgba(22,163,74,0.3)]"
+                    >
+                        <Globe size={16}/> ENABLE SIMULATION MODE
+                    </button>
+                </div>
+                <div className="mt-8 text-[10px] text-slate-600 font-mono">
+                    ERROR_CODE: VIDEO_INPUT_FAILURE
+                </div>
+            </div>
+        )}
+
+        {/* HUD Overlay (Only visible if granted or simulation) */}
+        {(permissionState === 'granted' || simulationMode) && (
+            <div className="absolute inset-0 z-10 pointer-events-none">
+                {/* Header / Compass Strip */}
+                <div className="bg-gradient-to-b from-black/80 to-transparent p-4 flex justify-between items-start pointer-events-auto">
+                    <div>
+                        <h1 className="text-xl font-black text-white flex items-center gap-2 drop-shadow-md">
+                            <Camera className={simulationMode ? "text-slate-400" : "text-green-500"} size={24}/> 
+                            AR <span className={simulationMode ? "text-slate-400" : "text-green-500"}>{simulationMode ? 'SIMULATION' : 'RECON'}</span>
+                        </h1>
+                        <div className="text-xs text-green-400 font-mono mt-1 flex gap-4 bg-black/50 px-2 py-1 rounded w-fit backdrop-blur-sm">
+                            <span>HDG: {Math.round(heading)}°</span>
+                            <span className="hidden md:inline">LAT: {userLoc?.lat.toFixed(4) || '...'}</span>
+                            <span className="hidden md:inline">LNG: {userLoc?.lng.toFixed(4) || '...'}</span>
+                        </div>
+                    </div>
+                    {simulationMode && (
+                        <button 
+                            onClick={() => setSimulationMode(false)} 
+                            className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-3 py-1.5 rounded border border-slate-600 flex items-center gap-2"
+                        >
+                            <RefreshCw size={12}/> RETRY CAMERA
+                        </button>
+                    )}
+                </div>
+
+                {/* AR Points */}
+                <div className="relative w-full h-full overflow-hidden">
+                    {poiList.length === 0 && (
+                         <div className="absolute top-1/4 w-full text-center text-xs text-green-500/50 font-mono animate-pulse">
+                            SCANNING HORIZON...
+                         </div>
+                    )}
+                    
+                    {poiList.map(poi => {
+                        // Field of view calculation (approx 60 deg FOV)
+                        let delta = poi.bearing - heading;
+                        if (delta < -180) delta += 360;
+                        if (delta > 180) delta -= 360;
+
+                        // If within 40 degrees either side center
+                        if (Math.abs(delta) < 40) {
+                            const leftPos = 50 + (delta / 40) * 50; // percentage
+                            // Scale size based on distance (closer = bigger)
+                            // Max scale 1.2, min 0.6
+                            const scale = Math.max(0.6, Math.min(1.2, 1 - (poi.distance / 10000)));
+                            const opacity = Math.max(0.4, 1 - (poi.distance / 8000));
+
+                            return (
+                                <div 
+                                    key={poi.id}
+                                    className="absolute top-1/2 flex flex-col items-center transition-all duration-300 pointer-events-auto cursor-pointer group"
+                                    style={{ 
+                                        left: `${leftPos}%`, 
+                                        transform: `translate(-50%, -50%) scale(${scale})`,
+                                        opacity: opacity,
+                                        zIndex: Math.round(100 - (poi.distance/100))
+                                    }}
+                                >
+                                    <div className="bg-slate-900/80 backdrop-blur border border-green-500/50 p-2 rounded text-center min-w-[120px] shadow-[0_0_15px_rgba(34,197,94,0.2)] group-hover:border-green-400 group-hover:bg-slate-800">
+                                        <div className="text-green-400 mb-1 group-hover:text-green-300">
+                                            {poi.type === 'infra' ? <AlertTriangle size={16} className="mx-auto"/> : <MapPin size={16} className="mx-auto"/>}
+                                        </div>
+                                        <div className="text-xs font-bold text-white truncate max-w-[150px]">{poi.title}</div>
+                                        <div className="text-[10px] text-green-300 font-mono">{(poi.distance / 1000).toFixed(1)} km</div>
+                                    </div>
+                                    <div className="h-16 w-px bg-gradient-to-b from-green-500/50 to-transparent"></div>
+                                </div>
+                            );
+                        }
+                        return null;
+                    })}
+                </div>
+                
+                {/* Center Reticle */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+                    <div className="w-16 h-16 border border-green-500/30 rounded-full flex items-center justify-center relative">
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-green-500"></div>
+                        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-green-500"></div>
+                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-2 h-0.5 bg-green-500"></div>
+                        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-0.5 bg-green-500"></div>
+                        <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse"></div>
+                    </div>
+                </div>
+                
+                {/* Compass Strip Bottom */}
+                <div className="absolute bottom-10 left-0 w-full overflow-hidden h-12 bg-gradient-to-t from-black to-transparent pointer-events-none">
+                    <div className="relative w-full h-full flex items-end justify-center">
+                        <div className="w-[1px] h-4 bg-red-500 absolute bottom-0 z-20"></div>
+                        {/* Simple CSS compass marks based on heading */}
+                        <div className="flex gap-8 transition-transform duration-100" style={{ transform: `translateX(${-heading * 4}px)` }}>
+                           {Array.from({length: 72}).map((_, i) => (
+                               <div key={i} className="flex flex-col items-center w-12 shrink-0">
+                                   <div className={`w-0.5 ${i % 9 === 0 ? 'h-3 bg-white' : 'h-1 bg-slate-500'}`}></div>
+                                   {i % 9 === 0 && <span className="text-[10px] text-slate-300 mt-1 font-mono">{(i * 5)}</span>}
+                               </div>
+                           ))}
+                        </div>
                     </div>
                 </div>
             </div>
-
-            {/* AR Points */}
-            <div className="relative w-full h-full overflow-hidden">
-                {poiList.map(poi => {
-                    // Simple field of view calculation (approx 60 deg FOV)
-                    let delta = poi.bearing - heading;
-                    if (delta < -180) delta += 360;
-                    if (delta > 180) delta -= 360;
-
-                    // If within 30 degrees either side center
-                    if (Math.abs(delta) < 30) {
-                        const leftPos = 50 + (delta / 30) * 50; // percentage
-                        return (
-                            <div 
-                                key={poi.id}
-                                className="absolute top-1/2 -translate-y-1/2 flex flex-col items-center transition-all duration-300"
-                                style={{ left: `${leftPos}%` }}
-                            >
-                                <div className="bg-slate-900/80 backdrop-blur border border-green-500/50 p-2 rounded text-center min-w-[120px]">
-                                    <div className="text-green-400 mb-1"><MapPin size={16} className="mx-auto"/></div>
-                                    <div className="text-xs font-bold text-white truncate max-w-[150px]">{poi.title}</div>
-                                    <div className="text-[10px] text-green-300 font-mono">{(poi.distance / 1000).toFixed(1)} km</div>
-                                </div>
-                                <div className="h-10 w-0.5 bg-green-500/50"></div>
-                            </div>
-                        );
-                    }
-                    return null;
-                })}
-            </div>
-            
-            {/* Center Reticle */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                <div className="w-12 h-12 border border-green-500/30 rounded-full flex items-center justify-center">
-                    <div className="w-1 h-1 bg-green-500 rounded-full"></div>
-                </div>
-                <div className="absolute top-1/2 w-full h-0.5 bg-green-500/20 -translate-y-1/2 -z-10 w-[200px] -left-[76px]"></div>
-            </div>
-        </div>
+        )}
     </div>
   );
 };

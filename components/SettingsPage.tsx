@@ -1,9 +1,14 @@
 
 import React, { useEffect, useState } from 'react';
-import { Settings, Save, Key, Bell, Shield, Server, Database, RefreshCw } from 'lucide-react';
-import { dbService } from '../services/db';
-import { AppSettings } from '../types';
-import { API_KEYS } from '../services/config';
+import { dbService, STORES } from '../services/db';
+import { AppSettings, MapVersion, FlightIntegrityReport } from '../types';
+import { API_KEYS, ADMIN_EMAIL } from '../services/config';
+import { sendSystemEmail, backfillFlightData, verifyFlightIntegrity } from '../services/api';
+import { getRegionStatus, syncRegionMap } from '../services/offlineMap';
+import { runAutomatedTests } from '../services/tests';
+import { useToast } from '../services/toastContext';
+import { Button, Form, Grid, Header, Icon, Input, Segment, Progress, Checkbox, Message } from 'semantic-ui-react';
+import { logger } from '../services/logger';
 
 const SettingsPage: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>({
@@ -18,17 +23,40 @@ const SettingsPage: React.FC = () => {
     hunterKey: '',
     hibpKey: '',
     theme: 'dark',
-    notifications: true
+    notifications: true,
+    notifyPush: true,
+    notifyApp: true,
+    notifyEmail: false
   });
   const [saved, setSaved] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+  
+  // Test Suite State
+  const [testResults, setTestResults] = useState<any[]>([]);
+  const [testsRunning, setTestsRunning] = useState(false);
+  
+  // Offline Map State
+  const [mapSyncProgress, setMapSyncProgress] = useState(0);
+  const [mapSyncStatus, setMapSyncStatus] = useState('');
+  const [isSyncingMap, setIsSyncingMap] = useState(false);
+  const [regionVersion, setRegionVersion] = useState<MapVersion | null>(null);
+  
+  // Flight Ops State
+  const [isBackfilling, setIsBackfilling] = useState(false);
+  const [backfillCount, setBackfillCount] = useState(0);
+  const [integrityReport, setIntegrityReport] = useState<FlightIntegrityReport | null>(null);
+  
+  const { addToast } = useToast();
 
   useEffect(() => {
     const loadSettings = async () => {
       const stored = await dbService.getSetting('global_config');
       if (stored) {
-        // Merge stored with defaults to ensure new keys exist
         setSettings(prev => ({...prev, ...stored}));
       }
+      
+      const v = await getRegionStatus();
+      setRegionVersion(v);
     };
     loadSettings();
   }, []);
@@ -40,176 +68,276 @@ const SettingsPage: React.FC = () => {
 
   const saveSettings = async () => {
     await dbService.saveSetting('global_config', settings);
+    logger.info('User updated system configuration', 'Settings');
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const handleTestEmail = async () => {
+      setEmailSending(true);
+      const success = await sendSystemEmail(ADMIN_EMAIL, 'Lanna Intel: Diagnostics Test', 'This is a test alert from the Lanna Intel Platform.\n\nSystem is online.');
+      setEmailSending(false);
+      
+      if(success) {
+          addToast('success', 'Email Sent', `Test alert dispatched to ${ADMIN_EMAIL}.`);
+          logger.success(`Test email sent to ${ADMIN_EMAIL}`, 'System');
+      } else {
+          addToast('error', 'Email Failed', 'Check API Keys or Network.');
+          logger.error('Failed to send test email', 'System');
+      }
+  };
+
+  const runTests = () => {
+      setTestsRunning(true);
+      setTestResults([]);
+      runAutomatedTests((results) => {
+          setTestResults(results);
+          if(results.every(r => r.status !== 'running')) setTestsRunning(false);
+      });
+  };
+
+  // --- MAP SYNC ---
+  const handleSyncMap = async () => {
+      setIsSyncingMap(true);
+      setMapSyncProgress(0);
+      setMapSyncStatus('Initializing handshake...');
+      
+      const success = await syncRegionMap((pct, status) => {
+          setMapSyncProgress(pct);
+          setMapSyncStatus(status);
+      });
+      
+      if(success) {
+          addToast('success', 'Region Synced', 'Chiang Mai + 50mi vectors updated successfully.');
+          const v = await getRegionStatus();
+          setRegionVersion(v);
+      } else {
+          addToast('error', 'Sync Failed', 'Could not update region vectors.');
+      }
+      
+      setIsSyncingMap(false);
+  };
+
+  // --- FLIGHT OPS ---
+  const handleBackfill = async () => {
+      setIsBackfilling(true);
+      const count = await backfillFlightData(7); // Backfill 7 days
+      setBackfillCount(count);
+      setIsBackfilling(false);
+      addToast('success', 'Backfill Complete', `Simulated ${count} historical records.`);
+  };
+
+  const handleIntegrityCheck = async () => {
+      const report = await verifyFlightIntegrity();
+      setIntegrityReport(report);
+      if(report.status === 'error') addToast('error', 'Data Corruption', 'Issues found in flight database.');
+      else addToast('success', 'Integrity Verified', 'Flight database is consistent.');
+  };
+
   return (
     <div className="h-full flex flex-col bg-slate-950 p-6 overflow-hidden relative">
-      <div className="mb-6 border-b border-slate-800 pb-4 flex justify-between items-end">
+      <div className="mb-6 flex justify-between items-end">
         <div>
-          <h1 className="text-3xl font-black text-white flex items-center gap-2">
-            <Settings className="text-slate-400" size={32} />
-            SYSTEM <span className="text-slate-600">CONFIGURATION</span>
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Backend Config • API Credentials • System Preferences
-          </p>
+          <Header as='h1' inverted>
+            <Icon name='settings' />
+            <Header.Content>
+              System Configuration
+              <Header.Subheader>Backend Config • API Credentials • System Diagnostics</Header.Subheader>
+            </Header.Content>
+          </Header>
         </div>
-        <button 
+        <Button 
+          primary={!saved}
+          color={saved ? 'green' : 'teal'}
           onClick={saveSettings}
-          className={`px-6 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${saved ? 'bg-green-600 text-white' : 'bg-cyan-600 hover:bg-cyan-500 text-white'}`}
-        >
-           {saved ? 'CONFIGURATION SAVED' : <><Save size={18}/> SAVE CHANGES</>}
-        </button>
+          icon={saved ? 'check' : 'save'}
+          content={saved ? 'Configuration Saved' : 'Save Changes'}
+        />
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-5xl">
+         <Grid columns={2} stackable>
             
-            {/* API Keys Section */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-               <h3 className="text-sm font-bold text-cyan-400 uppercase mb-6 flex items-center gap-2">
-                  <Key size={16}/> API Credential Vault
-               </h3>
-               
-               <div className="space-y-4">
-                  <div className="group">
-                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1 group-focus-within:text-cyan-500">Google Gemini API (v3)</label>
-                     <input 
-                       type="password"
-                       value={settings.geminiKey}
-                       onChange={(e) => handleChange('geminiKey', e.target.value)}
-                       className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none transition-colors"
-                       placeholder="AI Analysis Key..."
-                     />
-                  </div>
+            {/* LEFT COL: API Keys & Notifications */}
+            <Grid.Column>
+                {/* Notification Settings */}
+                <Segment inverted color='blue'>
+                    <Header as='h4' icon='bell' content='Notification Channels' inverted />
+                    <Form inverted>
+                        <Form.Group grouped>
+                            <label>Alert Preferences</label>
+                            <Form.Field>
+                                <Checkbox 
+                                    toggle 
+                                    label='In-App Logging (System Alerts)'
+                                    checked={settings.notifyApp}
+                                    onChange={(e, data) => handleChange('notifyApp', data.checked)}
+                                />
+                            </Form.Field>
+                            <Form.Field>
+                                <Checkbox 
+                                    toggle 
+                                    label='Browser Push Notifications'
+                                    checked={settings.notifyPush}
+                                    onChange={(e, data) => handleChange('notifyPush', data.checked)}
+                                />
+                            </Form.Field>
+                            <Form.Field>
+                                <Checkbox 
+                                    toggle 
+                                    label='Email Alerts (Critical Only)'
+                                    checked={settings.notifyEmail}
+                                    onChange={(e, data) => handleChange('notifyEmail', data.checked)}
+                                />
+                            </Form.Field>
+                        </Form.Group>
+                    </Form>
+                </Segment>
 
-                  <div className="grid grid-cols-2 gap-4">
-                      <div className="group">
-                        <label className="text-xs font-bold text-slate-500 uppercase block mb-1 group-focus-within:text-purple-500">11Labs API Key</label>
-                        <input 
-                          type="password"
-                          value={settings.elevenLabsKey}
-                          onChange={(e) => handleChange('elevenLabsKey', e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:border-purple-500 focus:outline-none transition-colors"
+                <Segment inverted>
+                    <Header as='h4' icon='key' content='API Credential Vault' inverted />
+                    <Form inverted>
+                        <Form.Field>
+                            <label>Google Gemini API (v3)</label>
+                            <Input type="password" value={settings.geminiKey} onChange={(e) => handleChange('geminiKey', e.target.value)} icon='google' />
+                        </Form.Field>
+                        <Form.Group widths='equal'>
+                            <Form.Field>
+                                <label>11Labs API Key</label>
+                                <Input type="password" value={settings.elevenLabsKey} onChange={(e) => handleChange('elevenLabsKey', e.target.value)} />
+                            </Form.Field>
+                            <Form.Field>
+                                <label>Shodan API Key</label>
+                                <Input type="password" value={settings.shodanKey} onChange={(e) => handleChange('shodanKey', e.target.value)} />
+                            </Form.Field>
+                        </Form.Group>
+                        <Form.Field>
+                            <label>VirusTotal API Key</label>
+                            <Input type="password" value={settings.virusTotalKey} onChange={(e) => handleChange('virusTotalKey', e.target.value)} />
+                        </Form.Field>
+                    </Form>
+                </Segment>
+
+                <Segment inverted color='red'>
+                    <Header as='h4' icon='database' content='Local Storage' inverted />
+                    <p className="text-sm text-slate-400">Purge cached map tiles, search history, and recordings.</p>
+                    <Button color='red' basic fluid content='Purge Cache DB' icon='trash' />
+                </Segment>
+            </Grid.Column>
+
+            {/* RIGHT COL: Diagnostics & Alerts */}
+            <Grid.Column>
+                
+                {/* REGION SENTINEL (MAP MANAGER) */}
+                <Segment inverted className="border-l-4 border-l-purple-500">
+                    <Header as='h4' icon='map' content='Region Sentinel' inverted subheader='Offline Vector Intelligence' />
+                    
+                    <div className="bg-slate-900 p-4 rounded border border-slate-700 mb-4 flex items-center gap-4">
+                        <Icon name='crosshairs' size='large' color='purple' />
+                        <div className="flex-1">
+                            <div className="font-bold text-white">Chiang Mai + 50mi (Active)</div>
+                            <div className="text-xs text-slate-500">
+                                Vectors: {regionVersion?.featureCount || 0} • Last Sync: {regionVersion ? new Date(regionVersion.lastCheck).toLocaleString() : 'Never'}
+                            </div>
+                        </div>
+                    </div>
+                        
+                    {isSyncingMap && (
+                        <div className="mb-4">
+                            <Progress percent={mapSyncProgress} indicating size='tiny' inverted active>
+                                {mapSyncStatus}
+                            </Progress>
+                        </div>
+                    )}
+
+                    <Button 
+                        color='purple' 
+                        onClick={handleSyncMap} 
+                        disabled={isSyncingMap}
+                        loading={isSyncingMap}
+                        icon='refresh'
+                        fluid
+                        content={isSyncingMap ? 'Syncing...' : 'Force Sync Delta Update'}
+                    />
+                </Segment>
+
+                {/* FLIGHT OPS BACKFILL */}
+                <Segment inverted className="border-l-4 border-l-cyan-500">
+                    <Header as='h4' icon='plane' content='Flight Data Ops' inverted subheader='Historical Backfill & Integrity' />
+                    
+                    <Grid columns={2}>
+                        <Grid.Column>
+                            <Button 
+                                color='teal' 
+                                basic 
+                                fluid 
+                                onClick={handleBackfill}
+                                loading={isBackfilling}
+                                icon='history'
+                                content='Backfill (7 Days)'
+                            />
+                            {backfillCount > 0 && <div className="text-center text-xs text-green-400 mt-2">+{backfillCount} Records</div>}
+                        </Grid.Column>
+                        <Grid.Column>
+                            <Button 
+                                color='orange' 
+                                basic 
+                                fluid 
+                                onClick={handleIntegrityCheck}
+                                icon='shield check'
+                                content='Verify DB'
+                            />
+                        </Grid.Column>
+                    </Grid>
+
+                    {integrityReport && (
+                        <Message size='mini' color={integrityReport.status === 'clean' ? 'green' : 'red'} className="mt-4">
+                            <Message.Header>Integrity Report</Message.Header>
+                            <p>Total: {integrityReport.totalRecords}</p>
+                            <p>Issues: {integrityReport.invalidTimestamps} Invalid / {integrityReport.duplicates} Dupes</p>
+                        </Message>
+                    )}
+                </Segment>
+
+                {/* Automated Test Suite */}
+                <Segment inverted>
+                    <div className="flex justify-between items-center mb-4">
+                        <Header as='h4' icon='heartbeat' content='Automated Test Suite' inverted className="m-0" />
+                        <Button 
+                            size='mini' 
+                            color='green' 
+                            basic 
+                            onClick={runTests} 
+                            loading={testsRunning}
+                            icon='play'
+                            content='Run All'
                         />
-                      </div>
+                    </div>
+                    
+                    <div className="bg-black/50 rounded p-4 min-h-[100px] max-h-[200px] overflow-y-auto font-mono text-xs">
+                        {testResults.length === 0 && <div className="text-slate-600 text-center py-8">Ready...</div>}
+                        {testResults.map((res, i) => (
+                            <div key={i} className="flex justify-between items-center mb-2 border-b border-slate-800/50 pb-2">
+                                <div className="flex items-center gap-2">
+                                    {res.status === 'running' && <Icon loading name='spinner' />}
+                                    {res.status === 'pass' && <Icon name='check circle' color='green' />}
+                                    {res.status === 'fail' && <Icon name='times circle' color='red' />}
+                                    <span className={res.status === 'fail' ? 'text-red-300' : 'text-slate-300'}>{res.name}</span>
+                                </div>
+                                <div className="text-right text-slate-500">
+                                    {res.duration && `${res.duration.toFixed(0)}ms`}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </Segment>
 
-                      <div className="group">
-                        <label className="text-xs font-bold text-slate-500 uppercase block mb-1 group-focus-within:text-red-500">Shodan API Key</label>
-                        <input 
-                          type="password"
-                          value={settings.shodanKey}
-                          onChange={(e) => handleChange('shodanKey', e.target.value)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:border-red-500 focus:outline-none transition-colors"
-                        />
-                      </div>
-                  </div>
-
-                  <div className="group">
-                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1 group-focus-within:text-blue-500">VirusTotal API Key</label>
-                     <input 
-                       type="password"
-                       value={settings.virusTotalKey}
-                       onChange={(e) => handleChange('virusTotalKey', e.target.value)}
-                       className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none transition-colors"
-                       placeholder="For Threat Intelligence..."
-                     />
-                  </div>
-
-                  <h4 className="text-xs font-bold text-slate-400 mt-4 border-b border-slate-800 pb-2">Extended OSINT Keys (Optional)</h4>
-
-                  <div className="group">
-                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1">BuiltWith API Key</label>
-                     <input 
-                       type="password"
-                       value={settings.builtWithKey}
-                       onChange={(e) => handleChange('builtWithKey', e.target.value)}
-                       className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none transition-colors"
-                       placeholder="Tech Stack Recon..."
-                     />
-                  </div>
-
-                  <div className="group">
-                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Hunter.io API Key</label>
-                     <input 
-                       type="password"
-                       value={settings.hunterKey}
-                       onChange={(e) => handleChange('hunterKey', e.target.value)}
-                       className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:border-orange-500 focus:outline-none transition-colors"
-                       placeholder="Email Discovery..."
-                     />
-                  </div>
-                  
-                  <div className="group">
-                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1">HIBP API Key</label>
-                     <input 
-                       type="password"
-                       value={settings.hibpKey}
-                       onChange={(e) => handleChange('hibpKey', e.target.value)}
-                       className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-white focus:border-pink-500 focus:outline-none transition-colors"
-                       placeholder="Have I Been Pwned..."
-                     />
-                  </div>
-               </div>
-            </div>
-
-            {/* System Preferences */}
-            <div className="space-y-6">
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                   <h3 className="text-sm font-bold text-slate-400 uppercase mb-6 flex items-center gap-2">
-                      <Server size={16}/> System Preferences
-                   </h3>
-                   
-                   <div className="flex items-center justify-between py-3 border-b border-slate-800">
-                      <div className="flex items-center gap-3">
-                         <Bell size={18} className="text-slate-500"/>
-                         <div>
-                            <div className="text-sm font-bold text-slate-200">System Notifications</div>
-                            <div className="text-xs text-slate-500">Alerts for critical intel events</div>
-                         </div>
-                      </div>
-                      <button 
-                        onClick={() => handleChange('notifications', !settings.notifications)}
-                        className={`w-12 h-6 rounded-full relative transition-colors ${settings.notifications ? 'bg-green-600' : 'bg-slate-700'}`}
-                      >
-                         <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.notifications ? 'left-7' : 'left-1'}`}></div>
-                      </button>
-                   </div>
-
-                   <div className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-3">
-                         <Shield size={18} className="text-slate-500"/>
-                         <div>
-                            <div className="text-sm font-bold text-slate-200">Secure Mode</div>
-                            <div className="text-xs text-slate-500">Force HTTPS and Proxy rotation</div>
-                         </div>
-                      </div>
-                      <div className="text-xs font-bold text-green-500 flex items-center gap-1">
-                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"/> ACTIVE
-                      </div>
-                   </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                   <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
-                      <Database size={16}/> Local Storage
-                   </h3>
-                   <div className="text-xs text-slate-500 mb-4">
-                      Clear cached map tiles, search history, and recorded audio clips.
-                   </div>
-                   <button className="bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 px-4 py-2 rounded text-xs font-bold flex items-center gap-2 w-full justify-center transition-colors">
-                      <RefreshCw size={14}/> PURGE CACHE DB
-                   </button>
-                </div>
-            </div>
-
-         </div>
+            </Grid.Column>
+         </Grid>
       </div>
       
       <div className="mt-6 text-center text-[10px] text-slate-600 font-mono">
-         Lanna Intel Platform • Version 2.6.0-BETA • Gemini v3 Integrated
+         Lanna Intel Platform • Version 2.9.0 • Region Sentinel Active
       </div>
     </div>
   );

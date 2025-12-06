@@ -47,7 +47,7 @@ const AddressIntelPage: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4 z-10">
         <div>
           <h1 className="text-3xl font-black text-white flex items-center gap-2">
-            <MapPin className="text-orange-500" size={32} />
+            <MapPin className="text-cyan-500 drop-shadow-[0_0_10px_#00ffff]" size={32} />
             TARGET <span className="text-slate-500">ACQUISITION</span>
           </h1>
           <p className="text-slate-400 text-sm mt-1">
@@ -59,16 +59,16 @@ const AddressIntelPage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden z-0">
           {/* Search & Results Panel */}
           <div className="flex flex-col gap-4">
-              <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+              <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
                  <div className="flex gap-2">
                      <input 
-                       className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-orange-500"
+                       className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-cyan-500 focus:shadow-[0_0_10px_#00ffff]"
                        placeholder="Enter coordinates, address, or postcode..."
                        value={query}
                        onChange={(e) => setQuery(e.target.value)}
                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                      />
-                     <button onClick={handleSearch} className="bg-orange-600 hover:bg-orange-700 text-white p-2 rounded-lg">
+                     <button onClick={handleSearch} className="bg-cyan-600 hover:bg-cyan-500 text-white p-2 rounded-lg shadow-[0_0_10px_#00ffff]">
                         <Search size={20}/>
                      </button>
                  </div>
@@ -84,7 +84,7 @@ const AddressIntelPage: React.FC = () => {
                       <div 
                         key={res.place_id} 
                         onClick={() => selectAddress(res)}
-                        className={`p-3 rounded-lg cursor-pointer transition-colors mb-2 border ${selected?.place_id === res.place_id ? 'bg-orange-900/20 border-orange-500' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'}`}
+                        className={`p-3 rounded-lg cursor-pointer transition-colors mb-2 border ${selected?.place_id === res.place_id ? 'bg-cyan-900/20 border-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.3)]' : 'bg-slate-800 border-slate-700 hover:bg-slate-700'}`}
                       >
                           <div className="font-bold text-sm text-slate-200">{res.display_name.split(',')[0]}</div>
                           <div className="text-xs text-slate-400 mt-1 truncate">{res.display_name}</div>
@@ -98,7 +98,7 @@ const AddressIntelPage: React.FC = () => {
           </div>
 
           {/* Map & Detail View */}
-          <div className="lg:col-span-2 bg-slate-900 rounded-xl border border-slate-800 overflow-hidden relative flex flex-col">
+          <div className="lg:col-span-2 bg-slate-900 rounded-xl border border-slate-800 overflow-hidden relative flex flex-col shadow-[0_0_20px_rgba(0,0,0,0.5)]">
               {selected ? (
                  <>
                    <div className="flex-1 relative z-0">
@@ -113,8 +113,16 @@ const AddressIntelPage: React.FC = () => {
                                     url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                                     attribution="Esri"
                                 />
-                                <Marker position={[parseFloat(selected.lat), parseFloat(selected.lon)]}>
-                                    <Popup>{selected.display_name}</Popup>
+                                <Marker 
+                                    position={[parseFloat(selected.lat), parseFloat(selected.lon)]}
+                                    icon={L.divIcon({
+                                        className: 'neon-marker-wrap',
+                                        html: `<div class="text-cyan-400 drop-shadow-[0_0_20px_#00ffff] animate-bounce"><svg width="64" height="64" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>`,
+                                        iconSize: [64, 64],
+                                        iconAnchor: [32, 64]
+                                    })}
+                                >
+                                    <Popup className="bg-slate-900 border-none text-white">{selected.display_name}</Popup>
                                 </Marker>
                             </MapContainer>
                        ) : (
@@ -161,7 +169,7 @@ const AddressIntelPage: React.FC = () => {
                            <h3 className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2"><Sun size={12}/> Local Conditions</h3>
                            {weather ? (
                                <div className="text-sm">
-                                   <div className="font-bold text-2xl">{weather.temp}°C</div>
+                                   <div className="font-bold text-2xl text-cyan-400">{weather.temp}°C</div>
                                    <div className="text-slate-400 capitalize">{weather.description}</div>
                                    <div className="text-xs text-slate-500 mt-1">Wind: {weather.windSpeed}m/s</div>
                                </div>

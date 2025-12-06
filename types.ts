@@ -1,4 +1,5 @@
 
+
 export interface WeatherData {
   temp: number;
   humidity: number;
@@ -7,6 +8,7 @@ export interface WeatherData {
   icon: string;
   dt: number; // Unix timestamp
   aqi?: number; // Air Quality Index
+  uv?: number; // UV Index
 }
 
 export interface ForecastData {
@@ -29,6 +31,14 @@ export interface ForecastData {
   };
 }
 
+export interface UVData {
+  uv: number;
+  uv_time: string;
+  uv_max: number;
+  uv_max_time: string;
+  ozone: number;
+}
+
 export interface FlightData {
   id: string;
   flightCode: string; // IATA/ICAO
@@ -41,6 +51,7 @@ export interface FlightData {
   status: 'en-route' | 'landed' | 'scheduled' | 'unknown';
   origin: string;
   destination: string;
+  timestamp?: string; // For historical tracking
 }
 
 export interface FlightSchedule {
@@ -111,6 +122,7 @@ export interface AudioRecording {
   label: string;
   transcription?: string;
   aiAnalysis?: string;
+  type: 'intercept' | 'synthesis'; // New field to distinguish source
 }
 
 export interface RadioStation {
@@ -122,6 +134,8 @@ export interface RadioStation {
   country: string;
   state: string;
   freq?: string;
+  signalStrength?: number; // 0-100 for UI simulation
+  modulation?: 'FM' | 'AM' | 'USB' | 'LSB' | 'DIG'; // for UI simulation
 }
 
 export interface FireHotspot {
@@ -139,6 +153,18 @@ export interface InfrastructurePOI {
   lng: number;
   name: string;
   type: 'police' | 'hospital' | 'embassy';
+}
+
+export interface HotelPOI {
+  id: number;
+  lat: number;
+  lng: number;
+  name: string;
+  type: 'hotel' | 'hostel' | 'guest_house';
+  phone?: string;
+  website?: string;
+  email?: string;
+  stars?: string;
 }
 
 export interface CurrencyRates {
@@ -277,7 +303,11 @@ export interface AppSettings {
   hibpKey?: string;
   theme: 'dark' | 'light';
   notifications: boolean;
-  mongoUri?: string; // New: MongoDB Connection String
+  // Notification Preferences
+  notifyPush: boolean;
+  notifyApp: boolean;
+  notifyEmail: boolean;
+  mongoUri?: string; 
 }
 
 export interface ARObject {
@@ -326,4 +356,63 @@ export interface TrackedClick {
     lng?: number;
     accuracy?: number;
     platform: string;
+    name?: string; // Customer Name
+}
+
+// System Alerts
+export interface SystemAlert {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | 'success';
+  title: string;
+  message: string;
+  source: string; // e.g., 'FlightRadar', 'System', 'Shodan'
+  read: boolean;
+  meta?: any;
+}
+
+// ElevenLabs Voice
+export interface ElevenLabsVoice {
+    voice_id: string;
+    name: string;
+    category: string;
+    labels?: {
+        accent?: string;
+        gender?: string;
+    }
+}
+
+// --- MAP & REGION TYPES ---
+
+export interface MapFeature {
+  id: string; // OSM ID
+  type: 'node' | 'way' | 'relation';
+  category: 'infra' | 'hotel' | 'traffic' | 'gov';
+  tags: Record<string, string>;
+  lat: number;
+  lng: number;
+  updatedAt: string; // ISO date
+  region: string;
+}
+
+export interface MapVersion {
+  region: string; // e.g., "chiang_mai_50mi"
+  version: number; // e.g., 6
+  lastCheck: string; // ISO date of last sync
+  featureCount: number;
+  bbox: {
+      north: number;
+      south: number;
+      east: number;
+      west: number;
+  };
+}
+
+export interface FlightIntegrityReport {
+    totalRecords: number;
+    invalidTimestamps: number;
+    futureTimestamps: number;
+    duplicates: number;
+    gapsFilled: number;
+    status: 'clean' | 'repaired' | 'error';
 }

@@ -1,31 +1,52 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, Square, Play, Save, Activity, Settings, Volume2, Radio, Pause, FileText, Search, BrainCircuit, Globe, AlertCircle } from 'lucide-react';
-import { fetchRadioStations } from '../services/api';
-import { RadioStation, AudioRecording, AppSettings } from '../types';
+import { Mic, Play, Save, Settings, Radio, Pause, FileText, BrainCircuit, Activity, Waves, Cpu, RadioReceiver, Volume2, Download, RefreshCw, Zap } from 'lucide-react';
+import { fetchRadioStations, fetchElevenLabsVoices, elevenLabsTTS } from '../services/api';
+import { RadioStation, AudioRecording, ElevenLabsVoice } from '../types';
 import { dbService, STORES } from '../services/db';
 import { usePlayer } from '../services/playerContext';
 import { useToast } from '../services/toastContext';
+import { API_KEYS } from '../services/config';
+import * as Tone from 'tone';
+import { Button, Segment, Header, Grid, Icon, List, Label, Card, Select, TextArea } from 'semantic-ui-react';
 
 const AudioIntelPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'monitor' | 'library'>('monitor');
+  const [activeTab, setActiveTab] = useState<'monitor' | 'synthesis' | 'library'>('monitor');
   const [isRecording, setIsRecording] = useState(false);
   const [stations, setStations] = useState<RadioStation[]>([]);
   const [recordings, setRecordings] = useState<AudioRecording[]>([]);
   
+  // Scanner State
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanIndex, setScanIndex] = useState(0);
+
+  // ElevenLabs State
+  const [voices, setVoices] = useState<ElevenLabsVoice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<string>('');
+  const [synthesisText, setSynthesisText] = useState('');
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+
+  // Audio Processing State
+  const [eqHigh, setEqHigh] = useState(0);
+  const [eqMid, setEqMid] = useState(0);
+  const [eqLow, setEqLow] = useState(0);
+
   // Use Global Player Context
   const { currentStation, isPlaying, playStation, stopStation } = usePlayer();
   const { addToast } = useToast();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const dataArrayRef = useRef<Uint8Array | null>(null);
-  const animationFrameRef = useRef<number>(0);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  
+  // Tone.js Refs
+  const micRef = useRef<Tone.UserMedia | null>(null);
+  const waveformRef = useRef<Tone.Waveform | null>(null);
+  const eqRef = useRef<Tone.EQ3 | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  
+  const animationFrameRef = useRef<number>(0);
 
-  // Specific high-value targets
+  // Priority Stations
   const priorityStations: RadioStation[] = [
       {
           stationuuid: 'manual-rtp-th',
@@ -35,17 +56,9 @@ const AudioIntelPage: React.FC = () => {
           tags: 'police, emergency, government',
           country: 'Thailand',
           state: 'Bangkok',
-          freq: 'WEB STREAM'
-      },
-      {
-          stationuuid: 'manual-map-99',
-          name: 'MAP Radio (Chiang Mai)',
-          url: 'http://radio.mapfoundation.org:8000/stream',
-          homepage: 'http://mapfoundation.org',
-          tags: 'community, migrant, ngo',
-          country: 'Thailand',
-          state: 'Chiang Mai',
-          freq: 'FM 99.0 MHz'
+          freq: 'WEB STREAM',
+          signalStrength: 95,
+          modulation: 'FM'
       },
       {
           stationuuid: 'manual-atc-vtcc-app',
@@ -55,18 +68,10 @@ const AudioIntelPage: React.FC = () => {
           tags: 'air traffic, control',
           country: 'Thailand',
           state: 'Chiang Mai',
-          freq: '124.700 MHz'
+          freq: '124.700 MHz',
+          signalStrength: 88,
+          modulation: 'AM'
       },
-      {
-          stationuuid: 'manual-atc-vtcc-twr',
-          name: 'Chiang Mai Tower (VTCC)',
-          url: 'https://s1-fmt2.liveatc.net/vtcc_twr',
-          homepage: 'https://liveatc.net',
-          tags: 'air traffic, tower',
-          country: 'Thailand',
-          state: 'Chiang Mai',
-          freq: '118.100 MHz'
-      }
   ];
 
   useEffect(() => {
@@ -75,39 +80,78 @@ const AudioIntelPage: React.FC = () => {
 
     // Load Radio Stations (API + Priority)
     fetchRadioStations().then(apiStations => {
-        // De-dupe based on UUID if necessary, but priority first
         setStations([...priorityStations, ...apiStations.slice(0, 50)]);
     });
 
+    // Load ElevenLabs Voices
+    if(API_KEYS.ELEVENLABS) {
+        fetchElevenLabsVoices(API_KEYS.ELEVENLABS).then(setVoices);
+    }
+
     return () => {
-      if (audioContextRef.current) audioContextRef.current.close();
+      stopMonitoring();
       cancelAnimationFrame(animationFrameRef.current);
     };
   }, []);
 
+  // Update EQ
+  useEffect(() => {
+      if (eqRef.current) {
+          eqRef.current.high.value = eqHigh;
+          eqRef.current.mid.value = eqMid;
+          eqRef.current.low.value = eqLow;
+      }
+  }, [eqHigh, eqMid, eqLow]);
+
+  // Scanner Logic
+  useEffect(() => {
+      let scanTimer: any;
+      if (isScanning && activeTab === 'monitor') {
+          scanTimer = setInterval(() => {
+              const nextIndex = (scanIndex + 1) % stations.length;
+              setScanIndex(nextIndex);
+              playStation(stations[nextIndex]);
+          }, 8000); // Scan every 8 seconds
+      } else {
+          clearInterval(scanTimer);
+      }
+      return () => clearInterval(scanTimer);
+  }, [isScanning, scanIndex, stations, activeTab]);
+
+  const toggleScanner = () => {
+      if (isScanning) {
+          setIsScanning(false);
+          stopStation();
+          addToast('info', 'Scanner Halted', 'Manual control resumed.');
+      } else {
+          setIsScanning(true);
+          addToast('success', 'Scanner Active', 'Cycling frequencies (8s interval).');
+      }
+  };
+
   const startMonitoring = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const source = audioContextRef.current.createMediaStreamSource(stream);
-      analyserRef.current = audioContextRef.current.createAnalyser();
-      analyserRef.current.fftSize = 2048;
+      await Tone.start();
+      micRef.current = new Tone.UserMedia();
+      eqRef.current = new Tone.EQ3(eqLow, eqMid, eqHigh);
+      waveformRef.current = new Tone.Waveform(1024);
       
-      source.connect(analyserRef.current);
+      micRef.current.connect(eqRef.current);
+      eqRef.current.connect(waveformRef.current);
+
+      await micRef.current.open();
       
-      const bufferLength = analyserRef.current.frequencyBinCount;
-      dataArrayRef.current = new Uint8Array(bufferLength);
-      
-      // Setup Recorder
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      const stream = (micRef.current as any)._stream; 
+      recorderRef.current = new MediaRecorder(stream);
       chunksRef.current = [];
-      mediaRecorderRef.current.ondataavailable = (e) => chunksRef.current.push(e.data);
-      mediaRecorderRef.current.onstop = saveRecording;
-      mediaRecorderRef.current.start();
+      
+      recorderRef.current.ondataavailable = (e) => chunksRef.current.push(e.data);
+      recorderRef.current.onstop = saveRecording;
+      recorderRef.current.start();
 
       drawWaveform();
       setIsRecording(true); 
-      addToast('success', 'Recording Started', 'Microphone active and capturing.');
+      addToast('success', 'Tone.js Engine Active', 'Spectral analysis and recording started.');
     } catch (err) {
       console.error("Microphone access denied", err);
       addToast('error', 'Microphone Error', 'Access denied or device not found.');
@@ -115,12 +159,14 @@ const AudioIntelPage: React.FC = () => {
   };
 
   const stopMonitoring = () => {
-    if(mediaRecorderRef.current && isRecording) {
-        mediaRecorderRef.current.stop();
+    if(recorderRef.current && isRecording) {
+        recorderRef.current.stop();
+    }
+    if (micRef.current) {
+        micRef.current.close();
     }
     setIsRecording(false);
     cancelAnimationFrame(animationFrameRef.current);
-    addToast('info', 'Recording Stopped', 'Processing audio file...');
   };
 
   const saveRecording = async () => {
@@ -133,34 +179,71 @@ const AudioIntelPage: React.FC = () => {
           duration: 0, 
           label: `Intercept #${Math.floor(Math.random() * 1000)}`,
           transcription: 'Processing...',
-          aiAnalysis: 'Pending Gemini Analysis...'
+          aiAnalysis: 'Pending Gemini Analysis...',
+          type: 'intercept'
       };
       await dbService.add(STORES.RECORDINGS, newRec);
       setRecordings(prev => [newRec, ...prev]);
       addToast('success', 'Intercept Saved', 'Audio saved to local archive.');
   };
 
+  // ElevenLabs Synthesis
+  const handleSynthesis = async () => {
+      if (!synthesisText || !selectedVoice) return;
+      setIsSynthesizing(true);
+      
+      const blob = await elevenLabsTTS(synthesisText, selectedVoice, API_KEYS.ELEVENLABS);
+      
+      if (blob) {
+          const url = window.URL.createObjectURL(blob);
+          const newRec: AudioRecording = {
+              id: Date.now().toString(),
+              url: url,
+              timestamp: Date.now(),
+              duration: 0,
+              label: `Synthesized Ops - ${voices.find(v => v.voice_id === selectedVoice)?.name || 'Unknown'}`,
+              transcription: synthesisText,
+              aiAnalysis: 'Generated Content (Deepfake/Lure)',
+              type: 'synthesis'
+          };
+          await dbService.add(STORES.RECORDINGS, newRec);
+          setRecordings(prev => [newRec, ...prev]);
+          addToast('success', 'Voice Generated', 'Audio synthesized and archived successfully.');
+      } else {
+          addToast('error', 'Synthesis Failed', 'Check API Key or Credits.');
+      }
+      setIsSynthesizing(false);
+  };
+
   const drawWaveform = () => {
-    if (!canvasRef.current || !analyserRef.current || !dataArrayRef.current) return;
+    if (!canvasRef.current || !waveformRef.current) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    
     animationFrameRef.current = requestAnimationFrame(drawWaveform);
-    analyserRef.current.getByteTimeDomainData(dataArrayRef.current);
-    ctx.fillStyle = '#020617'; 
+    
+    const values = waveformRef.current.getValue();
+    
+    ctx.fillStyle = '#0f172a'; // slate-900
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
     ctx.lineWidth = 2;
-    ctx.strokeStyle = '#22c55e'; 
+    ctx.strokeStyle = '#22c55e'; // green-500
     ctx.beginPath();
-    const sliceWidth = canvas.width * 1.0 / dataArrayRef.current.length;
+    
+    const sliceWidth = canvas.width * 1.0 / values.length;
     let x = 0;
-    for (let i = 0; i < dataArrayRef.current.length; i++) {
-      const v = dataArrayRef.current[i] / 128.0;
-      const y = v * canvas.height / 2;
+    
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i] as number; // Tone.js returns Float32Array
+      const y = (v + 1) / 2 * canvas.height;
+      
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
       x += sliceWidth;
     }
+    
     ctx.lineTo(canvas.width, canvas.height / 2);
     ctx.stroke();
   };
@@ -177,153 +260,273 @@ const AudioIntelPage: React.FC = () => {
     <div className="h-full flex flex-col bg-slate-950 p-6 overflow-hidden mb-12">
       <div className="flex justify-between items-end mb-6">
          <div>
-            <h1 className="text-3xl font-black text-white flex items-center gap-2">
-               <Mic className="text-purple-500" size={32}/> 
-               AUDIO <span className="text-slate-500">INTEL</span>
-            </h1>
-            <p className="text-slate-400 text-sm mt-1">Live Intercepts • Gemini v3 Analysis • Spectrum Monitoring</p>
+            <Header as='h1' inverted>
+               <Icon name='microphone' className="text-purple-500" />
+               <Header.Content>
+                 AUDIO INTEL
+                 <Header.Subheader className="text-slate-400">
+                   Tone.js Engine • ElevenLabs Ops • Spectrum Monitoring
+                 </Header.Subheader>
+               </Header.Content>
+            </Header>
          </div>
-         <div className="flex gap-2 bg-slate-900 p-1 rounded-lg">
-            <button 
+         <Button.Group size='small'>
+            <Button 
+                inverted 
+                color={activeTab === 'monitor' ? 'purple' : 'grey'}
+                active={activeTab === 'monitor'} 
                 onClick={() => setActiveTab('monitor')}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${activeTab === 'monitor' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
             >
                 LIVE MONITOR
-            </button>
-            <button 
-                onClick={() => setActiveTab('library')}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${activeTab === 'library' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
+            </Button>
+            <Button 
+                inverted 
+                color={activeTab === 'synthesis' ? 'purple' : 'grey'}
+                active={activeTab === 'synthesis'} 
+                onClick={() => setActiveTab('synthesis')}
             >
-                ARCHIVE & ANALYSIS
-            </button>
-         </div>
+                VOICE OPS
+            </Button>
+            <Button 
+                inverted 
+                color={activeTab === 'library' ? 'purple' : 'grey'}
+                active={activeTab === 'library'} 
+                onClick={() => setActiveTab('library')}
+            >
+                ARCHIVE
+            </Button>
+         </Button.Group>
       </div>
 
       {activeTab === 'monitor' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 overflow-hidden">
-            {/* Visualizer & Controls */}
-            <div className="lg:col-span-2 flex flex-col gap-4">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-1 flex-1 relative min-h-[300px]">
-                <canvas ref={canvasRef} width={800} height={400} className="w-full h-full rounded-xl bg-slate-950 block"/>
-                {!isRecording && (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        <button 
-                        onClick={startMonitoring}
-                        className="bg-red-600 hover:bg-red-700 text-white w-16 h-16 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(220,38,38,0.5)] transition-transform hover:scale-105"
-                        >
-                        <Mic size={32}/>
-                        </button>
-                    </div>
-                )}
-                {isRecording && (
-                    <div className="absolute bottom-4 right-4 flex gap-4">
-                        <div className="bg-red-500/20 text-red-500 px-3 py-1 rounded-full animate-pulse font-bold text-xs flex items-center gap-2">
-                            <div className="w-2 h-2 bg-red-500 rounded-full"/> RECORDING
-                        </div>
-                        <button onClick={stopMonitoring} className="bg-slate-800 hover:bg-slate-700 text-white p-3 rounded-full border border-slate-600">
-                            <Square size={24} fill="currentColor"/>
-                        </button>
-                    </div>
-                )}
-                </div>
+        <Grid columns={2} stackable className="h-full">
+            <Grid.Column width={10} className="flex flex-col h-full">
+                {/* Visualizer */}
+                <Segment inverted className="flex-1 relative p-0 overflow-hidden border-slate-700 bg-black">
+                    <canvas ref={canvasRef} width={800} height={400} className="w-full h-full block opacity-80"/>
+                    
+                    {/* Grid Overlay for Scope effect */}
+                    <div className="absolute inset-0 bg-[linear-gradient(rgba(0,255,0,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,0,0.1)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none"></div>
 
-                {/* EQ Controls */}
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                   <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center gap-2">
-                      <Activity size={14}/> Signal Enhancement
-                   </h3>
-                   <div className="flex gap-8 justify-center">
-                      {['LOW', 'MID', 'HIGH'].map((band) => (
-                        <div key={band} className="flex flex-col items-center gap-2 w-full max-w-[100px]">
-                           <div className="text-xs font-mono text-slate-400">{band}</div>
-                           <input 
-                             type="range" min="0" max="100" 
-                             className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                           />
+                    {!isRecording && (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <Button circular icon='microphone' size='massive' color='red' onClick={startMonitoring} className="shadow-[0_0_30px_rgba(220,38,38,0.6)] animate-pulse" />
                         </div>
-                      ))}
+                    )}
+                    {isRecording && (
+                        <div className="absolute bottom-4 right-4 flex gap-4 items-center">
+                            <div className="bg-red-900/50 text-red-500 px-3 py-1 rounded border border-red-500 animate-pulse font-mono text-xs font-bold">● REC 00:04:12</div>
+                            <Button circular icon='stop' size='big' color='grey' onClick={stopMonitoring} />
+                        </div>
+                    )}
+                </Segment>
+
+                {/* Tone.js EQ Controls */}
+                <Segment inverted className="mt-0">
+                   <div className="flex justify-between items-center mb-4">
+                       <Header as='h5' icon='settings' content='Tone.js Signal Enhancement' inverted className="m-0" />
+                       <Label color='purple' size='tiny'>DSP ACTIVE</Label>
                    </div>
-                </div>
-            </div>
+                   <Grid columns={3} centered>
+                      <Grid.Column textAlign='center'>
+                         <div className="text-xs text-slate-400 mb-2 font-mono">LOW_PASS ({eqLow} dB)</div>
+                         <input type="range" min="-20" max="10" value={eqLow} onChange={(e) => setEqLow(Number(e.target.value))} className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500" />
+                      </Grid.Column>
+                      <Grid.Column textAlign='center'>
+                         <div className="text-xs text-slate-400 mb-2 font-mono">BAND_PASS ({eqMid} dB)</div>
+                         <input type="range" min="-20" max="10" value={eqMid} onChange={(e) => setEqMid(Number(e.target.value))} className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500" />
+                      </Grid.Column>
+                      <Grid.Column textAlign='center'>
+                         <div className="text-xs text-slate-400 mb-2 font-mono">HIGH_PASS ({eqHigh} dB)</div>
+                         <input type="range" min="-20" max="10" value={eqHigh} onChange={(e) => setEqHigh(Number(e.target.value))} className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500" />
+                      </Grid.Column>
+                   </Grid>
+                </Segment>
+            </Grid.Column>
 
-            {/* Sidebar Tools */}
-            <div className="flex flex-col gap-4">
-                {/* Radio Browser Integration */}
-                <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col h-full">
-                   <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 flex items-center justify-between">
-                       <div className="flex items-center gap-2"><Radio size={14}/> Live Intercepts</div>
-                       {currentStation && isPlaying && <div className="text-[10px] text-green-500 animate-pulse">ACTIVE</div>}
-                   </h3>
+            <Grid.Column width={6} className="h-full flex flex-col">
+                <Segment inverted className="flex-1 flex flex-col p-0 overflow-hidden bg-slate-900 border-slate-700">
+                   <div className="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
+                       <div>
+                           <h4 className="text-white font-bold flex items-center gap-2 m-0"><RadioReceiver size={16} className="text-cyan-500"/> SPECTRUM SCANNER</h4>
+                           <div className="text-[10px] text-slate-500 font-mono mt-1">
+                               {stations.length} FREQUENCIES LOCKED
+                           </div>
+                       </div>
+                       <Button 
+                          size='mini' 
+                          color={isScanning ? 'green' : 'grey'} 
+                          onClick={toggleScanner}
+                          animated
+                          className={isScanning ? 'animate-pulse' : ''}
+                       >
+                          <Button.Content visible>{isScanning ? 'SCANNING' : 'START SCAN'}</Button.Content>
+                          <Button.Content hidden><RefreshCw/></Button.Content>
+                       </Button>
+                   </div>
                    
-                   <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-                      {stations.map(station => (
-                          <div key={station.stationuuid} className={`flex items-center justify-between bg-slate-800 p-2 rounded hover:bg-slate-700 transition-colors ${station.freq ? 'border-l-2 border-orange-500' : ''}`}>
-                              <div className="overflow-hidden">
-                                  <div className="text-xs font-bold text-slate-200 truncate">{station.name}</div>
-                                  <div className="flex gap-2 text-[10px] text-slate-500 truncate">
-                                     {station.freq && <span className="text-orange-400 font-mono">{station.freq}</span>}
-                                     <span>{station.tags}</span>
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
+                      {stations.map((station, idx) => {
+                          const active = currentStation?.stationuuid === station.stationuuid;
+                          return (
+                              <div 
+                                key={station.stationuuid}
+                                onClick={() => active && isPlaying ? stopStation() : playStation(station)}
+                                className={`
+                                    group cursor-pointer rounded border p-2 transition-all duration-200
+                                    ${active ? 'bg-cyan-900/20 border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.2)]' : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'}
+                                `}
+                              >
+                                  <div className="flex justify-between items-start mb-1">
+                                      <div className="flex items-center gap-2">
+                                          {active && isPlaying ? (
+                                              <Activity size={14} className="text-cyan-400 animate-pulse"/>
+                                          ) : (
+                                              <div className="w-3.5 h-3.5 rounded-full border-2 border-slate-600 group-hover:border-cyan-500 transition-colors"></div>
+                                          )}
+                                          <span className={`text-xs font-bold ${active ? 'text-white' : 'text-slate-300'}`}>{station.name}</span>
+                                      </div>
+                                      <span className="text-[10px] font-mono text-cyan-400 bg-cyan-900/30 px-1 rounded">
+                                          {station.freq || 'WEB'}
+                                      </span>
+                                  </div>
+                                  
+                                  <div className="flex items-center justify-between mt-2 pl-6">
+                                      <div className="flex gap-1 items-center">
+                                          {/* Simulated Signal Bars */}
+                                          <div className="flex gap-0.5 items-end h-3">
+                                              {[1,2,3,4,5].map(i => (
+                                                  <div 
+                                                    key={i} 
+                                                    className={`w-1 rounded-sm ${i <= Math.ceil((station.signalStrength || 50)/20) ? 'bg-green-500' : 'bg-slate-700'}`}
+                                                    style={{height: `${i*20}%`}}
+                                                  ></div>
+                                              ))}
+                                          </div>
+                                          <span className="text-[10px] text-slate-500 ml-1">{station.signalStrength || 0}%</span>
+                                      </div>
+                                      <span className="text-[10px] text-slate-500 font-mono border border-slate-700 px-1 rounded">
+                                          {station.modulation || 'FM'}
+                                      </span>
                                   </div>
                               </div>
-                              <button 
-                                onClick={() => currentStation?.stationuuid === station.stationuuid && isPlaying ? stopStation() : playStation(station)}
-                                className={`p-1.5 rounded-full ${currentStation?.stationuuid === station.stationuuid && isPlaying ? 'bg-red-500 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}`}
-                              >
-                                 {currentStation?.stationuuid === station.stationuuid && isPlaying ? <Pause size={12}/> : <Play size={12}/>}
-                              </button>
-                          </div>
-                      ))}
+                          );
+                      })}
                    </div>
-                   <div className="mt-2 text-[10px] text-slate-600 text-center italic">
-                       * Some ATC/Police streams may require VPN or Local Relay.
-                       <br/>Global Player active in footer.
-                   </div>
-                </div>
+                </Segment>
+            </Grid.Column>
+        </Grid>
+      ) : activeTab === 'synthesis' ? (
+        /* VOICE OPS TAB */
+        <div className="h-full flex flex-col md:flex-row gap-6 max-w-6xl mx-auto w-full">
+            <div className="w-full md:w-1/3 flex flex-col gap-4">
+                <Segment inverted className="border-cyan-500/30 shadow-[0_0_20px_rgba(6,182,212,0.1)]">
+                    <Header as='h3' icon className="text-center">
+                        <BrainCircuit className="text-cyan-400 mb-2 mx-auto" size={40}/>
+                        <Header.Content>Neural Voice Synthesis</Header.Content>
+                        <Header.Subheader>ElevenLabs v2 GenAI Model</Header.Subheader>
+                    </Header>
+                    <div className="mt-6 space-y-4">
+                        <div>
+                            <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Voice Model</label>
+                            <select 
+                                className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white focus:border-cyan-500 outline-none"
+                                value={selectedVoice}
+                                onChange={(e) => setSelectedVoice(e.target.value)}
+                            >
+                                <option value="">Select Target Voice...</option>
+                                {voices.map(v => (
+                                    <option key={v.voice_id} value={v.voice_id}>{v.name} ({v.category})</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="p-3 bg-slate-800 rounded border border-slate-700 text-xs text-slate-400">
+                            <p className="mb-2"><span className="text-cyan-400 font-bold">Credits Remaining:</span> Unknown</p>
+                            <p>Generates high-fidelity deepfake audio for psyops, lures, or automated broadcasts. Stored securely in Archive.</p>
+                        </div>
+                    </div>
+                </Segment>
+            </div>
+            
+            <div className="flex-1 flex flex-col">
+                <Segment inverted className="flex-1 flex flex-col relative border-slate-700">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 via-purple-500 to-cyan-500 animate-pulse"></div>
+                    <label className="text-xs font-bold text-slate-400 uppercase mb-2 block p-2">Input Script</label>
+                    <textarea 
+                        className="flex-1 bg-slate-900/50 border-none resize-none p-4 text-white font-mono focus:ring-0 focus:outline-none text-sm"
+                        placeholder="Enter text to synthesize..."
+                        value={synthesisText}
+                        onChange={(e) => setSynthesisText(e.target.value)}
+                    />
+                    <div className="p-4 border-t border-slate-700 bg-slate-900 flex justify-between items-center">
+                        <span className="text-xs text-slate-500">{synthesisText.length} chars</span>
+                        <Button 
+                            color='teal' 
+                            onClick={handleSynthesis} 
+                            disabled={!selectedVoice || !synthesisText || isSynthesizing}
+                            className="shadow-[0_0_15px_rgba(6,182,212,0.4)]"
+                        >
+                            {isSynthesizing ? (
+                                <><RefreshCw className="animate-spin mr-2"/> GENERATING...</>
+                            ) : (
+                                <><Zap className="mr-2"/> SYNTHESIZE AUDIO</>
+                            )}
+                        </Button>
+                    </div>
+                </Segment>
             </div>
         </div>
       ) : (
         /* ARCHIVE TAB */
-        <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-slate-800 bg-slate-950/50 flex justify-between items-center">
-                <h2 className="font-bold text-slate-300 flex items-center gap-2"><FileText size={16}/> Intelligence Archive</h2>
-                <div className="text-xs text-slate-500">{recordings.length} Recordings</div>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {recordings.map(rec => (
-                    <div key={rec.id} className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-                        <div className="flex justify-between items-start mb-3">
-                            <div>
-                                <div className="font-bold text-white text-sm">{rec.label}</div>
-                                <div className="text-xs text-slate-500">{new Date(rec.timestamp).toLocaleString()}</div>
-                            </div>
-                            <div className="flex gap-2">
-                                <button className="p-2 bg-slate-700 hover:bg-purple-600 rounded-full text-white transition-colors" onClick={() => {const a = new Audio(rec.url); a.play();}}>
-                                    <Play size={14}/>
-                                </button>
-                                <button className="p-2 bg-slate-700 hover:bg-cyan-600 rounded-full text-white transition-colors" onClick={() => analyzeRecording(rec)}>
-                                    <BrainCircuit size={14}/>
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <div className="bg-slate-950 rounded p-3 mb-2 min-h-[60px]">
-                            <div className="text-[10px] font-bold text-slate-500 uppercase mb-1">AI Analysis (Gemini v3)</div>
-                            <p className="text-xs text-slate-300 whitespace-pre-wrap">{rec.aiAnalysis || "Pending analysis..."}</p>
-                        </div>
-
-                        {rec.transcription && (
-                            <div className="bg-slate-900/50 rounded p-2">
-                                <div className="text-[10px] font-bold text-slate-600 uppercase mb-1">Transcription</div>
-                                <p className="text-xs text-slate-400 italic">"{rec.transcription}"</p>
-                            </div>
-                        )}
-                    </div>
-                ))}
+        <Segment inverted className="flex-1 overflow-hidden flex flex-col">
+            <Header as='h3' inverted dividing>
+                <Icon name='folder open' />
+                <Header.Content>Intelligence Archive <Label circular color='blue'>{recordings.length}</Label></Header.Content>
+            </Header>
+            <div className="flex-1 overflow-y-auto p-2">
+                <Card.Group itemsPerRow={2} stackable>
+                    {recordings.map(rec => (
+                        <Card key={rec.id} fluid className="!bg-slate-900 !border !border-slate-700">
+                            <Card.Content>
+                                <Card.Header className="flex justify-between !text-slate-200">
+                                    <span>{rec.label}</span>
+                                    <Label size='mini' color={rec.type === 'synthesis' ? 'purple' : 'red'}>
+                                        {rec.type === 'synthesis' ? 'AI GEN' : 'INTERCEPT'}
+                                    </Label>
+                                </Card.Header>
+                                <Card.Meta className="!text-slate-500 font-mono text-xs">{new Date(rec.timestamp).toLocaleString()}</Card.Meta>
+                                <Card.Description className="!text-slate-400 mt-2">
+                                    <div className="text-xs p-2 bg-slate-950 rounded border border-slate-800 min-h-[40px] italic">
+                                        "{rec.transcription ? (rec.transcription.substring(0, 100) + (rec.transcription.length > 100 ? '...' : '')) : 'No text content.'}"
+                                    </div>
+                                    <div className="mt-2 text-xs flex items-center gap-1 text-cyan-500">
+                                        <BrainCircuit size={12}/> {rec.aiAnalysis || "Pending analysis..."}
+                                    </div>
+                                </Card.Description>
+                            </Card.Content>
+                            <Card.Content extra className="!border-t !border-slate-800">
+                                <div className='ui two buttons'>
+                                    <Button basic inverted color='green' onClick={() => {const a = new Audio(rec.url); a.play();}}>
+                                        <Icon name='play' /> Play
+                                    </Button>
+                                    <Button basic inverted color='teal' onClick={() => analyzeRecording(rec)}>
+                                        <Icon name='microchip' /> Analyze
+                                    </Button>
+                                </div>
+                            </Card.Content>
+                        </Card>
+                    ))}
+                </Card.Group>
                 {recordings.length === 0 && (
-                    <div className="col-span-2 text-center text-slate-500 py-12">No recordings available. Start monitoring to capture intel.</div>
+                    <Segment placeholder inverted className="!bg-transparent">
+                        <Header icon>
+                            <Icon name='file audio outline' />
+                            No recordings found in secure storage.
+                        </Header>
+                    </Segment>
                 )}
             </div>
-        </div>
+        </Segment>
       )}
     </div>
   );
