@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import AppMap from './AppMap';
 import ShodanPage from './ShodanPage';
@@ -5,6 +6,13 @@ import FlightBoard from './FlightBoard';
 import AudioIntelPage from './AudioIntelPage';
 import SpaceIntelPage from './SpaceIntelPage';
 import FinancePage from './FinancePage';
+import AddressIntelPage from './AddressIntelPage';
+import GovOpsPage from './GovOpsPage';
+import ARIntelPage from './ARIntelPage';
+import SettingsPage from './SettingsPage';
+import OsintToolsPage from './OsintToolsPage';
+import TrackerPage from './TrackerPage';
+import PredictiveAnalysisPage from './PredictiveAnalysisPage';
 import WeatherPanel from './WeatherPanel';
 import CalendarPanel from './CalendarPanel';
 import { WebcamData, WeatherData, CurrencyRates } from '../types';
@@ -62,8 +70,15 @@ const Dashboard: React.FC<DashboardProps> = ({ activeTab }) => {
   // View Routing
   if (activeTab === 'space') return <SpaceIntelPage />;
   if (activeTab === 'finance') return <FinancePage />;
+  if (activeTab === 'address') return <AddressIntelPage />;
+  if (activeTab === 'gov') return <GovOpsPage />;
   if (activeTab === 'webcams') return <ShodanPage />;
   if (activeTab === 'audio') return <AudioIntelPage />;
+  if (activeTab === 'ar') return <ARIntelPage />;
+  if (activeTab === 'settings') return <SettingsPage />;
+  if (activeTab === 'osint') return <OsintToolsPage />;
+  if (activeTab === 'tracker') return <TrackerPage />;
+  if (activeTab === 'predictive') return <PredictiveAnalysisPage />;
 
   return (
     <div className="flex-1 h-full relative flex flex-col">

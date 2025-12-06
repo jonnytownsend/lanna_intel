@@ -1,3 +1,4 @@
+
 export interface WeatherData {
   temp: number;
   humidity: number;
@@ -48,6 +49,8 @@ export interface FlightSchedule {
   time: string;
   airline: string;
   airport: string;
+  originCode: string; // ICAO
+  destCode: string; // ICAO
   status: string;
 }
 
@@ -79,7 +82,9 @@ export interface TrafficIncident {
 export interface AppTask {
   id: number;
   title: string;
-  date: string; // ISO Date string
+  date: string; // ISO Date string (Creation date)
+  dueDate?: string; // ISO Date string (Target date/time)
+  url?: string;
   completed: boolean;
   priority: 'low' | 'medium' | 'high';
 }
@@ -105,6 +110,7 @@ export interface AudioRecording {
   duration: number;
   label: string;
   transcription?: string;
+  aiAnalysis?: string;
 }
 
 export interface RadioStation {
@@ -115,6 +121,7 @@ export interface RadioStation {
   tags: string;
   country: string;
   state: string;
+  freq?: string;
 }
 
 export interface FireHotspot {
@@ -234,4 +241,89 @@ export interface EonetEvent {
     type: string;
     coordinates: [number, number]; // GeoJSON format [lng, lat]
   }>;
+}
+
+export interface AddressResult {
+  place_id: number;
+  licence: string;
+  osm_type: string;
+  osm_id: number;
+  boundingbox: string[];
+  lat: string;
+  lon: string;
+  display_name: string;
+  class: string;
+  type: string;
+  importance: number;
+}
+
+export interface GovStat {
+  indicator: string;
+  value: number | string;
+  date: string;
+  source: string;
+}
+
+export interface AppSettings {
+  geminiKey: string;
+  elevenLabsKey: string;
+  shodanKey: string;
+  flightRadarKey: string;
+  nasaKey: string;
+  openWeatherKey: string;
+  virusTotalKey: string; 
+  builtWithKey?: string;
+  hunterKey?: string;
+  hibpKey?: string;
+  theme: 'dark' | 'light';
+  notifications: boolean;
+  mongoUri?: string; // New: MongoDB Connection String
+}
+
+export interface ARObject {
+  id: string;
+  lat: number;
+  lng: number;
+  title: string;
+  type: 'flight' | 'place' | 'infra';
+  distance: number; // meters
+  bearing: number; // degrees
+}
+
+export interface ExifData {
+    make?: string;
+    model?: string;
+    dateTime?: string;
+    lat?: number;
+    lng?: number;
+    software?: string;
+}
+
+// OSINT Types
+export interface DNSRecord {
+    name: string;
+    type: number;
+    data: string;
+    TTL: number;
+}
+
+export interface IpIntel {
+    ip: string;
+    city: string;
+    region: string;
+    country: string;
+    org: string;
+    asn: string;
+}
+
+// Tracker Types
+export interface TrackedClick {
+    id: string;
+    timestamp: string;
+    ip: string;
+    userAgent: string;
+    lat?: number;
+    lng?: number;
+    accuracy?: number;
+    platform: string;
 }

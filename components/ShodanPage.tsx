@@ -1,20 +1,33 @@
+
 import React, { useEffect, useState } from 'react';
 import { WebcamData } from '../types';
 import { fetchShodanWebcams } from '../services/api';
-import { Search, ShieldAlert, Server, Maximize2, X, MapPin, Shield, RefreshCw, Layers, ExternalLink, Copy } from 'lucide-react';
+import { Search, ShieldAlert, Server, Maximize2, X, MapPin, Shield, RefreshCw, Layers, ExternalLink, Copy, Map as MapIcon, Grid } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import L from 'leaflet';
+
+// Fix Icon
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
 
 const ShodanPage: React.FC = () => {
   const [webcams, setWebcams] = useState<WebcamData[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCam, setSelectedCam] = useState<WebcamData | null>(null);
+  const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
 
-  // Filters
+  // Filters - Defaults empty
   const [queryPort, setQueryPort] = useState('');
   const [queryOrg, setQueryOrg] = useState('');
   const [queryProduct, setQueryProduct] = useState('');
 
   const loadData = async () => {
     setLoading(true);
+    // Fetch without filters initially (api.ts will default to just country:TH or global if adjusted)
     const data = await fetchShodanWebcams({
         port: queryPort,
         org: queryOrg,
@@ -50,47 +63,67 @@ const ShodanPage: React.FC = () => {
           </p>
         </div>
         
-        {/* Advanced Filters */}
-        <div className="flex flex-wrap gap-2 items-end bg-slate-900 p-2 rounded-xl border border-slate-800">
-           <div className="flex flex-col gap-1">
-              <label className="text-[10px] uppercase text-slate-500 font-bold ml-1">Target Port</label>
-              <select 
-                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500"
-                value={queryPort}
-                onChange={(e) => setQueryPort(e.target.value)}
-              >
-                <option value="">Any Port</option>
-                <option value="80">80 (HTTP)</option>
-                <option value="443">443 (HTTPS)</option>
-                <option value="554">554 (RTSP)</option>
-                <option value="21">21 (FTP)</option>
-                <option value="22">22 (SSH)</option>
-                <option value="23">23 (Telnet)</option>
-              </select>
-           </div>
+        <div className="flex gap-2">
+             {/* View Toggle */}
+             <div className="flex bg-slate-900 rounded-xl border border-slate-800 p-1">
+                 <button 
+                    onClick={() => setViewMode('grid')}
+                    className={`p-2 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white'}`}
+                    title="Grid View"
+                 >
+                    <Grid size={18}/>
+                 </button>
+                 <button 
+                    onClick={() => setViewMode('map')}
+                    className={`p-2 rounded-lg transition-colors ${viewMode === 'map' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white'}`}
+                    title="Map View"
+                 >
+                    <MapIcon size={18}/>
+                 </button>
+             </div>
 
-           <div className="flex flex-col gap-1">
-              <label className="text-[10px] uppercase text-slate-500 font-bold ml-1">Device Type</label>
-              <select 
-                 className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500"
-                 value={queryProduct}
-                 onChange={(e) => setQueryProduct(e.target.value)}
-              >
-                <option value="">All Devices</option>
-                <option value="webcam">Webcams</option>
-                <option value="apache">Apache Servers</option>
-                <option value="nginx">Nginx</option>
-                <option value="mikrotik">MikroTik Routers</option>
-                <option value="openssh">OpenSSH</option>
-              </select>
-           </div>
-           
-           <button 
-             onClick={loadData}
-             className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-lg transition-colors h-full flex items-center justify-center"
-           >
-             {loading ? <RefreshCw className="animate-spin" size={16}/> : <Search size={16}/>}
-           </button>
+             {/* Advanced Filters */}
+             <div className="flex flex-wrap gap-2 items-end bg-slate-900 p-2 rounded-xl border border-slate-800">
+                <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase text-slate-500 font-bold ml-1">Target Port</label>
+                    <select 
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500"
+                        value={queryPort}
+                        onChange={(e) => setQueryPort(e.target.value)}
+                    >
+                        <option value="">Any Port</option>
+                        <option value="80">80 (HTTP)</option>
+                        <option value="443">443 (HTTPS)</option>
+                        <option value="554">554 (RTSP)</option>
+                        <option value="21">21 (FTP)</option>
+                        <option value="22">22 (SSH)</option>
+                        <option value="23">23 (Telnet)</option>
+                    </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase text-slate-500 font-bold ml-1">Device Type</label>
+                    <select 
+                        className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500"
+                        value={queryProduct}
+                        onChange={(e) => setQueryProduct(e.target.value)}
+                    >
+                        <option value="">All Devices</option>
+                        <option value="webcam">Webcams</option>
+                        <option value="apache">Apache Servers</option>
+                        <option value="nginx">Nginx</option>
+                        <option value="mikrotik">MikroTik Routers</option>
+                        <option value="openssh">OpenSSH</option>
+                    </select>
+                </div>
+                
+                <button 
+                    onClick={loadData}
+                    className="bg-red-600 hover:bg-red-700 text-white p-2 rounded-lg transition-colors h-full flex items-center justify-center"
+                >
+                    {loading ? <RefreshCw className="animate-spin" size={16}/> : <Search size={16}/>}
+                </button>
+            </div>
         </div>
       </div>
 
@@ -99,7 +132,30 @@ const ShodanPage: React.FC = () => {
           <div className="w-12 h-12 border-4 border-slate-800 border-t-red-500 rounded-full animate-spin"/>
           <div className="text-sm font-mono animate-pulse">ESTABLISHING SHODAN UPLINK...</div>
         </div>
+      ) : viewMode === 'map' ? (
+          /* MAP VIEW */
+          <div className="flex-1 rounded-xl overflow-hidden border border-slate-800">
+               <MapContainer 
+                   center={[13.7563, 100.5018]} 
+                   zoom={6} 
+                   style={{height: '100%', width: '100%', background: '#020617'}}
+               >
+                   <TileLayer
+                      attribution='&copy; CARTO'
+                      url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                   />
+                   {webcams.map(cam => (
+                       <Marker 
+                          key={cam.id} 
+                          position={[cam.lat, cam.lng]}
+                          eventHandlers={{ click: () => setSelectedCam(cam) }}
+                       >
+                       </Marker>
+                   ))}
+               </MapContainer>
+          </div>
       ) : (
+        /* GRID VIEW */
         <div className="flex-1 overflow-y-auto pr-2">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {webcams.length === 0 && (

@@ -1,14 +1,17 @@
+
 // Simple IndexedDB wrapper to act as our "MongoDB" for local persistence
 // This reduces API calls and stores historical data/tasks.
 
 const DB_NAME = 'LannaIntelDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Incremented for Settings Store
 
 export const STORES = {
   FLIGHTS: 'flights_history',
   WEBCAMS: 'webcams_cache',
   TASKS: 'tasks',
-  CACHE_META: 'api_cache_meta'
+  CACHE_META: 'api_cache_meta',
+  SETTINGS: 'app_settings',
+  RECORDINGS: 'audio_recordings'
 };
 
 const openDB = (): Promise<IDBDatabase> => {
@@ -32,6 +35,12 @@ const openDB = (): Promise<IDBDatabase> => {
       }
       if (!db.objectStoreNames.contains(STORES.CACHE_META)) {
         db.createObjectStore(STORES.CACHE_META, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
+        db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(STORES.RECORDINGS)) {
+        db.createObjectStore(STORES.RECORDINGS, { keyPath: 'id' });
       }
     };
   });
@@ -69,6 +78,22 @@ export const dbService = {
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
+  },
+  
+  // Specific for Settings (Key-Value style)
+  async getSetting(key: string): Promise<any> {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const transaction = db.transaction(STORES.SETTINGS, 'readonly');
+      const store = transaction.objectStore(STORES.SETTINGS);
+      const request = store.get(key);
+      request.onsuccess = () => resolve(request.result ? request.result.value : null);
+      request.onerror = () => resolve(null);
+    });
+  },
+
+  async saveSetting(key: string, value: any): Promise<void> {
+      await this.add(STORES.SETTINGS, { key, value });
   },
 
   // Cache validity checker

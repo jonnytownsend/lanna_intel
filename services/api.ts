@@ -1,8 +1,10 @@
+
 import { API_KEYS, API_URLS, CORS_PROXY } from './config';
 import { 
   FlightData, WeatherData, WebcamData, ForecastData, GdeltEvent, TrafficIncident,
   RadioStation, FireHotspot, InfrastructurePOI, CurrencyRates, NewsItem,
-  NasaAsteroid, NasaSolarFlare, NasaEpicImage, NasaGST, ISSData, EonetEvent
+  NasaAsteroid, NasaSolarFlare, NasaEpicImage, NasaGST, ISSData, EonetEvent,
+  AddressResult, GovStat, FlightSchedule, DNSRecord, IpIntel
 } from '../types';
 import { dbService, STORES } from './db';
 
@@ -125,6 +127,35 @@ export const fetchRealtimeFlights = async (
   }
 };
 
+export const fetchFlightSchedule = async (airportCode: string = 'VTCC', type: 'arrivals' | 'departures' = 'arrivals'): Promise<FlightSchedule[]> => {
+   // Use FR24 Common API via Proxy (Simulating Higher Tier access)
+   // This endpoint often provides basic data even without full auth
+   try {
+       const url = `https://api.flightradar24.com/common/v1/airport.json?code=${airportCode}&page=1&limit=20`;
+       const response = await fetch(`${CORS_PROXY}${encodeURIComponent(url)}`);
+       
+       if(!response.ok) return [];
+       const data = await response.json();
+       
+       const list = data.result.response.airport.pluginData.schedule[type].data;
+       
+       return list.map((item: any) => ({
+           type: type,
+           flight: item.flight.identification.number.default,
+           time: new Date(item.flight.time.scheduled.departure * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+           airline: item.flight.airline.name,
+           airport: type === 'arrivals' ? item.flight.airport.origin.name : item.flight.airport.destination.name,
+           originCode: item.flight.airport.origin.code.icao,
+           destCode: item.flight.airport.destination.code.icao,
+           status: item.flight.status.text
+       }));
+
+   } catch(e) {
+       console.error("Flight Schedule Error", e);
+       return [];
+   }
+};
+
 /**
  * Shodan API Logic - STRICT NO SIMULATION
  */
@@ -134,7 +165,12 @@ export const fetchShodanWebcams = async (filters: { port?: string, org?: string,
     if (filters.port) query += ` port:${filters.port}`;
     if (filters.org) query += ` org:"${filters.org}"`;
     if (filters.product) query += ` product:"${filters.product}"`;
-    if (!filters.product && !filters.port) query += ' webcam'; 
+    if (!filters.product && !filters.port && !filters.org && !filters.port) {
+       // If no specific filters, we just want EVERYTHING in Thailand (Webcams/Servers)
+       // query is just 'country:TH'
+    } else if (!filters.product && !filters.port) {
+       query += ' webcam'; 
+    }
 
     const targetUrl = `${SHODAN_HOST_SEARCH}?key=${API_KEYS.SHODAN}&query=${encodeURIComponent(query)}`;
     const response = await fetch(`${CORS_PROXY}${encodeURIComponent(targetUrl)}`);
@@ -438,6 +474,59 @@ export const fetchEonetEvents = async (): Promise<EonetEvent[]> => {
 };
 
 /**
+ * Address Search via Nominatim
+ */
+export const fetchAddressSearch = async (query: string): Promise<AddressResult[]> => {
+  try {
+    const url = `${API_URLS.NOMINATIM_SEARCH}?q=${encodeURIComponent(query)}&format=json&countrycodes=th&addressdetails=1&limit=5`;
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    return await response.json();
+  } catch (e) {
+    console.error("Address Search Error", e);
+    return [];
+  }
+};
+
+/**
+ * Gov Stats via World Bank API
+ */
+export const fetchGovStats = async (): Promise<GovStat[]> => {
+    try {
+        // Fetch multiple indicators: Population, GDP, Inflation, Tourists (approx)
+        const indicators = [
+            'SP.POP.TOT', // Population
+            'NY.GDP.MKTP.CD', // GDP
+            'FP.CPI.TOTL.ZG', // Inflation
+            'ST.INT.ARVL' // International Tourism
+        ];
+        
+        const promises = indicators.map(ind => 
+             fetch(`${API_URLS.WORLDBANK_API}/indicator/${ind}?format=json&date=2020:2023`).then(r => r.json())
+        );
+        
+        const results = await Promise.all(promises);
+        const stats: GovStat[] = [];
+        
+        results.forEach((res, idx) => {
+            if(res && res[1] && res[1][0]) {
+               stats.push({
+                   indicator: res[1][0].indicator.value,
+                   value: res[1][0].value,
+                   date: res[1][0].date,
+                   source: 'World Bank Open Data'
+               });
+            }
+        });
+        
+        return stats;
+    } catch (e) {
+        console.error("Gov Data Error", e);
+        return [];
+    }
+};
+
+/**
  * 11Labs Integration Stubs
  */
 export const elevenLabsTTS = async (text: string, voiceId: string = '21m00Tcm4TlvDq8ikWAM'): Promise<ArrayBuffer | null> => {
@@ -451,4 +540,56 @@ export const elevenLabsTTS = async (text: string, voiceId: string = '21m00Tcm4Tl
      if(!response.ok) throw new Error("TTS Failed");
      return await response.arrayBuffer();
    } catch(e) { return null; }
+};
+
+// --- OSINT FUNCTIONS ---
+
+/**
+ * DNS Enumeration using Google DNS-over-HTTPS
+ */
+export const fetchDNSRecords = async (domain: string): Promise<DNSRecord[]> => {
+    const types = [1, 28, 15, 16, 2]; // A, AAAA, MX, TXT, NS
+    const typeNames: {[key: number]: string} = { 1: 'A', 28: 'AAAA', 15: 'MX', 16: 'TXT', 2: 'NS' };
+    const records: DNSRecord[] = [];
+
+    try {
+        const promises = types.map(type => 
+            fetch(`${API_URLS.GOOGLE_DNS}?name=${domain}&type=${type}`).then(r => r.json())
+        );
+        const results = await Promise.all(promises);
+
+        results.forEach(res => {
+            if (res.Answer) {
+                res.Answer.forEach((ans: any) => {
+                    records.push({
+                        name: ans.name,
+                        type: ans.type,
+                        data: ans.data,
+                        TTL: ans.TTL
+                    });
+                });
+            }
+        });
+    } catch(e) { console.error(e); }
+    return records;
+};
+
+/**
+ * IP Intelligence (Geolocation/ASN)
+ */
+export const fetchIpIntel = async (ip: string): Promise<IpIntel | null> => {
+    try {
+        // Use ipapi.co (JSON format)
+        const response = await fetch(`${API_URLS.IP_API}/${ip}/json/`);
+        if (!response.ok) return null;
+        const data = await response.json();
+        return {
+            ip: data.ip,
+            city: data.city,
+            region: data.region,
+            country: data.country_name,
+            org: data.org,
+            asn: data.asn
+        };
+    } catch(e) { return null; }
 };

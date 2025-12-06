@@ -1,3 +1,4 @@
+
 // NOTE: In a production environment, these should be in a .env file and accessed via process.env
 // For this generated application, we are using the provided keys directly as requested.
 
@@ -8,7 +9,9 @@ export const API_KEYS = {
   OPENWEATHER: 'a1957bcdde9d69f0c1a7d675c256f397',
   ELEVENLABS: 'YOUR_ELEVENLABS_API_KEY', // Placeholder
   WAQI: 'demo', // 'demo' works for specific stations, otherwise requires free key
-  NASA: 'DwfvWjXOIprDNiE7Ye3ocRzWOwhV6YwMPWHBgfi4'
+  NASA: 'DwfvWjXOIprDNiE7Ye3ocRzWOwhV6YwMPWHBgfi4',
+  GEMINI: 'AIzaSyC1RHhAwTAYeyFS2ARdunQwOidbIS-_i3',
+  VIRUSTOTAL: '' // User must provide in settings
 };
 
 // We use a CORS proxy to bypass browser restrictions for APIs that don't support CORS (like Shodan direct access)
@@ -28,7 +31,12 @@ export const API_URLS = {
   CURRENCY_API: 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/thb.json',
   NASA_BASE: 'https://api.nasa.gov',
   NASA_EONET: 'https://eonet.gsfc.nasa.gov/api/v3',
-  ISS_TLE: 'https://api.wheretheiss.at/v1/satellites/25544'
+  ISS_TLE: 'https://api.wheretheiss.at/v1/satellites/25544',
+  NOMINATIM_SEARCH: 'https://nominatim.openstreetmap.org/search',
+  WORLDBANK_API: 'https://api.worldbank.org/v2/country/th',
+  VIRUSTOTAL_API: 'https://www.virustotal.com/api/v3',
+  GOOGLE_DNS: 'https://dns.google/resolve',
+  IP_API: 'https://ipapi.co'
 };
 
 // Lanna Region Center (Chiang Mai)
