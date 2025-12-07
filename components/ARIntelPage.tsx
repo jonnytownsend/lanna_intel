@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, Navigation, MapPin, AlertTriangle, VideoOff, RefreshCw, Layers, EyeOff, Globe } from 'lucide-react';
+import { Camera, Navigation, MapPin, AlertTriangle, VideoOff, RefreshCw, Layers, EyeOff, Globe, Repeat } from 'lucide-react';
 import { fetchInfrastructure, fetchTrafficIncidents } from '../services/api';
 import { REGION_CENTER } from '../services/config';
 import { ARObject } from '../types';
@@ -14,6 +14,9 @@ const ARIntelPage: React.FC = () => {
   const [userLoc, setUserLoc] = useState<{lat: number, lng: number} | null>(null);
   const [heading, setHeading] = useState<number>(0);
   const [poiList, setPoiList] = useState<ARObject[]>([]);
+  
+  // Calibration State
+  const [showCalibration, setShowCalibration] = useState(false);
   
   const startCamera = async () => {
     setPermissionState('prompt');
@@ -98,6 +101,22 @@ const ARIntelPage: React.FC = () => {
         window.removeEventListener('deviceorientation', handleOrientation);
     };
   }, []);
+
+  // Calibration Check Effect
+  useEffect(() => {
+      // Show calibration if we have a real location (not sim), and haven't calibrated yet
+      if (userLoc && !simulationMode) {
+          const hasCalibrated = localStorage.getItem('compass_calibrated');
+          if (!hasCalibrated) {
+              setShowCalibration(true);
+          }
+      }
+  }, [userLoc, simulationMode]);
+
+  const completeCalibration = () => {
+      localStorage.setItem('compass_calibrated', 'true');
+      setShowCalibration(false);
+  };
 
   // Load POIs based on location
   useEffect(() => {
@@ -185,6 +204,36 @@ const ARIntelPage: React.FC = () => {
                 muted
                 className="absolute inset-0 w-full h-full object-cover z-0"
             />
+        )}
+
+        {/* CALIBRATION OVERLAY */}
+        {showCalibration && (
+           <div className="absolute inset-0 z-[2000] bg-black/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 animate-in fade-in duration-300">
+               <div className="bg-slate-900 border border-cyan-500/50 p-8 rounded-2xl max-w-sm text-center shadow-[0_0_30px_rgba(6,182,212,0.3)] relative overflow-hidden">
+                   {/* Decorative background pulse */}
+                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-cyan-500/20 rounded-full blur-3xl animate-pulse"></div>
+                   
+                   <div className="mx-auto bg-slate-800 w-24 h-24 rounded-full flex items-center justify-center mb-6 relative z-10">
+                       <div className="absolute inset-0 border-4 border-cyan-500/30 rounded-full"></div>
+                       <div className="absolute inset-0 border-t-4 border-cyan-400 rounded-full animate-spin"></div>
+                       <Repeat size={48} className="text-white relative z-10 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)]" />
+                   </div>
+                   
+                   <h3 className="text-xl font-bold text-white mb-2 relative z-10">Compass Calibration</h3>
+                   <p className="text-slate-400 text-sm mb-8 leading-relaxed relative z-10">
+                       GPS signal acquired. To align AR sensors accurately, please wave your device in a 
+                       <span className="text-cyan-400 font-bold"> figure-8 motion </span> 
+                       for a few seconds.
+                   </p>
+                   
+                   <button 
+                       onClick={completeCalibration}
+                       className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-lg transition-all active:scale-95 shadow-lg shadow-cyan-900/50 relative z-10"
+                   >
+                       SENSORS ALIGNED
+                   </button>
+               </div>
+           </div>
         )}
 
         {/* Error / Permission State Overlay */}

@@ -130,8 +130,12 @@ const SettingsPage: React.FC = () => {
   const handleIntegrityCheck = async () => {
       const report = await verifyFlightIntegrity();
       setIntegrityReport(report);
-      if(report.status === 'error') addToast('error', 'Data Corruption', 'Issues found in flight database.');
-      else addToast('success', 'Integrity Verified', 'Flight database is consistent.');
+      
+      if(report.status === 'repaired') {
+          addToast('warning', 'Database Repaired', `Removed ${report.invalidTimestamps + report.futureTimestamps + report.duplicates} corrupted records.`);
+      } else {
+          addToast('success', 'Integrity Verified', 'Flight database is clean and consistent.');
+      }
   };
 
   return (
@@ -291,10 +295,20 @@ const SettingsPage: React.FC = () => {
                     </Grid>
 
                     {integrityReport && (
-                        <Message size='mini' color={integrityReport.status === 'clean' ? 'green' : 'red'} className="mt-4">
-                            <Message.Header>Integrity Report</Message.Header>
-                            <p>Total: {integrityReport.totalRecords}</p>
-                            <p>Issues: {integrityReport.invalidTimestamps} Invalid / {integrityReport.duplicates} Dupes</p>
+                        <Message size='mini' color={integrityReport.status === 'clean' ? 'green' : 'yellow'} className="mt-4">
+                            <Message.Header>
+                                {integrityReport.status === 'clean' ? 'Database Healthy' : 'Repairs Applied'}
+                            </Message.Header>
+                            <div className="flex flex-col gap-1 mt-1 text-xs">
+                                <div>Total Valid Records: <strong>{integrityReport.totalRecords}</strong></div>
+                                {integrityReport.status === 'repaired' && (
+                                    <>
+                                        <div>Fixed Invalid Timestamps: {integrityReport.invalidTimestamps}</div>
+                                        <div>Fixed Future Dates: {integrityReport.futureTimestamps}</div>
+                                        <div>Removed Duplicates: {integrityReport.duplicates}</div>
+                                    </>
+                                )}
+                            </div>
                         </Message>
                     )}
                 </Segment>

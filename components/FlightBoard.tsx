@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, AlertTriangle, AlertOctagon } from 'lucide-react';
 import { fetchFlightSchedule } from '../services/api';
 import { FlightSchedule } from '../types';
 import { Table, Header, Icon, Label, Button } from 'semantic-ui-react';
@@ -66,10 +66,25 @@ const FlightBoard: React.FC = () => {
       });
   }, [flights, filterType, mode]);
 
+  // Derive Active Alerts from current list
+  const alertFlights = useMemo(() => {
+      return flights.filter(f => 
+        ['delayed', 'cancelled', 'diverted', 'return'].some(s => f.status.toLowerCase().includes(s))
+      );
+  }, [flights]);
+
   // Intel Simulation Generators
   const getPaxLoad = (flightCode: string) => {
       const seed = flightCode.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
       return Math.floor(120 + (seed % 200)); // Mock pax
+  };
+
+  const getRowStyle = (status: string) => {
+      const s = status.toLowerCase();
+      if (s.includes('cancelled') || s.includes('diverted')) return 'bg-red-900/20';
+      if (s.includes('delayed')) return 'bg-yellow-900/20';
+      if (s.includes('landed')) return 'bg-green-900/10';
+      return '';
   };
 
   return (
@@ -106,6 +121,27 @@ const FlightBoard: React.FC = () => {
             </Button.Group>
         </div>
 
+        {/* ACTIVE ALERTS PANEL */}
+        {alertFlights.length > 0 && (
+            <div className="mb-4 bg-red-950/40 border border-red-500/30 rounded-lg p-3 shrink-0 animate-in fade-in slide-in-from-top-2">
+                <div className="flex items-center gap-2 text-red-400 font-bold mb-2 text-xs uppercase tracking-wider">
+                    <AlertOctagon size={16} className="animate-pulse"/>
+                    <span>Critical Flight Alerts ({alertFlights.length})</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {alertFlights.map((f, i) => (
+                        <div key={i} className="flex items-center justify-between bg-slate-900/80 p-2 rounded border-l-2 border-red-500">
+                            <div className="flex items-center gap-2">
+                                <span className="font-mono text-white font-bold text-xs">{f.flight}</span>
+                                <span className="text-[10px] text-slate-400">{f.airline}</span>
+                            </div>
+                            <span className="text-[10px] font-bold text-red-400 bg-red-950/50 px-2 py-0.5 rounded uppercase">{f.status}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        )}
+
         {/* Board Container */}
         <div className="flex-1 overflow-auto custom-scrollbar border rounded-lg border-slate-800 bg-slate-900">
             <Table inverted celled selectable compact='very' fixed>
@@ -127,7 +163,7 @@ const FlightBoard: React.FC = () => {
                         </Table.Row>
                     )}
                     {filteredFlights.map((flight, idx) => (
-                        <Table.Row key={idx}>
+                        <Table.Row key={idx} className={getRowStyle(flight.status)}>
                             <Table.Cell className="font-mono text-cyan-400 font-bold">{flight.time}</Table.Cell>
                             <Table.Cell>
                                 <Label size='tiny' color='grey' horizontal>{flight.flight}</Label>
@@ -141,7 +177,7 @@ const FlightBoard: React.FC = () => {
                             <Table.Cell textAlign='center'>
                                 <Label 
                                     size='tiny' 
-                                    color={flight.status.toLowerCase().includes('landed') ? 'green' : flight.status.toLowerCase().includes('cancelled') ? 'red' : 'yellow'}
+                                    color={flight.status.toLowerCase().includes('landed') ? 'green' : flight.status.toLowerCase().includes('cancelled') ? 'red' : flight.status.toLowerCase().includes('delayed') ? 'orange' : 'yellow'}
                                 >
                                     {flight.status}
                                 </Label>
@@ -155,7 +191,10 @@ const FlightBoard: React.FC = () => {
         {/* Footer */}
         <div className="mt-2 text-xs text-slate-500 flex justify-between">
             <span>Total Flights: {filteredFlights.length}</span>
-            <span>Real-time Status Monitoring Active</span>
+            <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                Real-time Status Monitoring Active
+            </span>
         </div>
       </div>
     </div>

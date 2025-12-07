@@ -1,6 +1,6 @@
 
-import { dbService, STORES } from './db';
-import { calculateBoundingBox, toOverpassBBox, BoundingBox } from './geo';
+import { dbService } from './db';
+import { calculateBoundingBox } from './geo';
 import { REGION_CENTER, API_URLS } from './config';
 import { MapFeature, MapVersion } from '../types';
 import { logger } from './logger';
@@ -17,16 +17,20 @@ export const getRegionStatus = async (): Promise<MapVersion | null> => {
     return await dbService.getSetting(`map_version_${REGION_ID}`) as MapVersion | null;
 };
 
+const classifyFeature = (tags: any): 'infra' | 'hotel' | 'traffic' | 'gov' => {
+    if (!tags) return 'infra';
+    if (tags.amenity === 'police' || tags.amenity === 'hospital' || tags.amenity === 'fire_station') return 'infra';
+    if (tags.tourism === 'hotel' || tags.tourism === 'hostel') return 'hotel';
+    if (tags.government) return 'gov';
+    if (tags.highway === 'traffic_signals') return 'traffic';
+    return 'infra';
+};
+
 /**
  * Fetches only new/changed features from Overpass
  */
-const fetchOverpassDelta = async (bbox: string, since?: string): Promise<MapFeature[]> => {
+const fetchOverpassDelta = async (bbox: string): Promise<MapFeature[]> => {
     // Note: Overpass API doesn't strictly support "since" queries easily without diffs.
-    // For this Intelligence Focused Approach, we re-fetch the specific high-value vector data
-    // because the payload is small (MBs) compared to raster tiles.
-    // In a real production environment with a custom backend, this would use the 'since' param
-    // to query our own MongoDB 'updatedAt' field.
-    
     // We construct a query for CRITICAL INTEL: Police, Hospitals, Gov, Hotels, Traffic Signals.
     const query = `
         [out:json][timeout:60];
@@ -60,7 +64,7 @@ const fetchOverpassDelta = async (bbox: string, since?: string): Promise<MapFeat
                 tags: el.tags || {},
                 lat: el.lat,
                 lng: el.lon,
-                updatedAt: new Date().toISOString(), // In real scenario, use changeset timestamp
+                updatedAt: new Date().toISOString(),
                 region: REGION_ID
             }));
             
@@ -71,60 +75,44 @@ const fetchOverpassDelta = async (bbox: string, since?: string): Promise<MapFeat
     }
 };
 
-const classifyFeature = (tags: any): 'infra' | 'hotel' | 'traffic' | 'gov' => {
-    if (!tags) return 'infra';
-    if (tags.amenity === 'police' || tags.amenity === 'hospital' || tags.amenity === 'fire_station') return 'infra';
-    if (tags.tourism === 'hotel' || tags.tourism === 'hostel') return 'hotel';
-    if (tags.government) return 'gov';
-    if (tags.highway === 'traffic_signals') return 'traffic';
-    return 'infra';
-};
-
-/**
- * Main Sync Function
- * Performs the Check -> Delta Fetch -> Merge flow.
- */
 export const syncRegionMap = async (onProgress: (pct: number, status: string) => void): Promise<boolean> => {
     try {
         onProgress(5, 'Calculating geospatial bounds...');
         const bbox = calculateBoundingBox(REGION_CENTER.lat, REGION_CENTER.lng, RADIUS_MILES);
-        
-        onProgress(15, 'Establishing handshake with vector server...');
-        // Simulate Server Handshake delay
-        await new Promise(r => setTimeout(r, 800)); 
-        
-        // In Option 1, we treat "Delta" as refreshing the vector layer for the region.
-        // Since we are serverless, we fetch fresh from Source (Overpass) and merge.
-        onProgress(30, 'Downloading vector intelligence...');
-        const features = await fetchOverpassDelta(toOverpassBBox(bbox));
-        
+        const bboxStr = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
+
+        onProgress(20, 'Requesting vector delta from Overpass...');
+        const features = await fetchOverpassDelta(bboxStr);
+
         if (features.length === 0) {
-            logger.warn('No features returned from Overpass', 'OfflineMap');
-            // Don't fail, maybe just empty area?
+            logger.warn('No features returned from sync', 'OfflineMap');
+            onProgress(100, 'Sync Complete (No changes)');
+            return true;
         }
 
-        onProgress(60, `Ingesting ${features.length} data points into secure storage...`);
-        
-        // Batch Insert/Update into IndexedDB
+        onProgress(60, `Indexing ${features.length} features...`);
+        // Batch insert into Vector Store
         await dbService.batchAddFeatures(features);
-        
-        // Update Version Info
+
+        onProgress(90, 'Updating region metadata...');
+        const currentVersion = await getRegionStatus();
         const newVersion: MapVersion = {
             region: REGION_ID,
-            version: Date.now(), // Use timestamp as version for simple freshness
+            version: (currentVersion?.version || 0) + 1,
             lastCheck: new Date().toISOString(),
             featureCount: features.length,
             bbox: bbox
         };
-        
+
         await dbService.saveSetting(`map_version_${REGION_ID}`, newVersion);
         
-        onProgress(100, 'Region Sync Complete.');
-        logger.success(`Synced ${features.length} vector targets for Chiang Mai + 50mi`, 'OfflineMap');
+        onProgress(100, 'Sync Complete');
+        logger.success(`Region ${REGION_ID} synced successfully (${features.length} vectors)`, 'OfflineMap');
         return true;
 
     } catch (e) {
-        logger.error('Region Sync Failed', 'OfflineMap', e);
+        logger.error('Map Sync Critical Failure', 'OfflineMap', e);
+        onProgress(0, 'Sync Failed');
         return false;
     }
 };

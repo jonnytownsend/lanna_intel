@@ -1,9 +1,11 @@
+
 import React, { useEffect, useState, useRef } from 'react';
 import { WebcamData } from '../types';
 import { fetchShodanWebcams } from '../services/api';
-import { Search, ShieldAlert, Grid, Map as MapIcon, RefreshCw, X, Maximize2, ExternalLink, Globe, Server, Activity, Play, Pause, AlertTriangle } from 'lucide-react';
+import { Search, ShieldAlert, Grid, Map as MapIcon, RefreshCw, X, Maximize2, ExternalLink, Globe, Server, Activity, Play, Pause, AlertTriangle, Copy, Terminal } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import { useToast } from '../services/toastContext';
 
 // Fix Leaflet Icon
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -17,6 +19,9 @@ const ShodanPage: React.FC = () => {
   const [webcams, setWebcams] = useState<WebcamData[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grid' | 'map'>('grid');
+  
+  // Toast
+  const { addToast } = useToast();
 
   // Filters
   const [queryPort, setQueryPort] = useState('');
@@ -69,6 +74,11 @@ const ShodanPage: React.FC = () => {
       } else {
           document.exitFullscreen();
       }
+  };
+
+  const copyToClipboard = (text: string) => {
+      navigator.clipboard.writeText(text);
+      addToast('info', 'Copied', `${text} copied to clipboard`);
   };
 
   return (
@@ -182,7 +192,7 @@ const ShodanPage: React.FC = () => {
                           </div>
                           <div className="p-3">
                               <div className="flex justify-between items-start mb-2">
-                                  <div className="font-mono text-xs font-bold text-white">{cam.ip}</div>
+                                  <div className="font-mono text-xs font-bold text-white truncate" title={cam.ip}>{cam.ip}</div>
                                   <div className="text-[10px] text-slate-500">{cam.port}</div>
                               </div>
                               <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-1">
@@ -210,18 +220,27 @@ const ShodanPage: React.FC = () => {
 
                   {/* Video Stage */}
                   <div className="flex-1 bg-black relative flex flex-col">
-                       {/* Simulated Stream Feed */}
+                       {/* Stream Feed Area */}
                        <div className="flex-1 relative flex items-center justify-center overflow-hidden bg-zinc-950">
-                           {selectedCam.port === 554 ? (
-                               <div className="text-center p-8">
-                                   <AlertTriangle size={64} className="text-yellow-500 mx-auto mb-4"/>
+                           {/* RTSP / HTTP Detection */}
+                           {selectedCam.port === 554 || selectedCam.product?.toLowerCase().includes('rtsp') ? (
+                               <div className="text-center p-8 max-w-md">
+                                   <div className="w-20 h-20 bg-yellow-900/20 rounded-full flex items-center justify-center mx-auto mb-6 border border-yellow-500/30">
+                                      <Terminal size={40} className="text-yellow-500"/>
+                                   </div>
                                    <h3 className="text-xl font-bold text-white mb-2">RTSP Stream Detected</h3>
-                                   <p className="text-slate-400 mb-6 max-w-md mx-auto">
-                                       Real-Time Streaming Protocol (Port 554) requires a dedicated player or WebSocket proxy. 
-                                       Browsers cannot render raw RTSP natively.
+                                   <p className="text-slate-400 mb-6 text-sm">
+                                       Real-Time Streaming Protocol (Port 554) cannot be rendered natively in web browsers without a transcoding server.
                                    </p>
-                                   <div className="bg-slate-800 p-3 rounded font-mono text-xs text-green-400 mb-4 inline-block">
-                                       rtsp://{selectedCam.ip}:{selectedCam.port}/
+                                   <div className="bg-slate-900 p-4 rounded border border-slate-700 font-mono text-xs text-green-400 mb-4 break-all relative group">
+                                       <span className="opacity-50 select-none">$ </span>
+                                       ffplay rtsp://{selectedCam.ip}:{selectedCam.port}/
+                                       <button 
+                                          onClick={() => copyToClipboard(`rtsp://${selectedCam.ip}:${selectedCam.port}/`)}
+                                          className="absolute top-2 right-2 text-slate-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                       >
+                                          <Copy size={14}/>
+                                       </button>
                                    </div>
                                </div>
                            ) : (
@@ -229,36 +248,46 @@ const ShodanPage: React.FC = () => {
                                    src={`${selectedCam.imageUrl}${isPlaying ? `?t=${refreshKey}` : ''}`} 
                                    alt="Live Stream" 
                                    className="max-w-full max-h-full object-contain"
+                                   onError={(e) => { (e.target as HTMLImageElement).src = 'https://via.placeholder.com/800x600/000000/333333?text=CONNECTION+LOST'; }}
                                />
                            )}
                            
-                           {/* Overlay UI */}
+                           {/* Live Overlay Badge */}
                            <div className="absolute top-4 left-4 flex gap-2">
-                               <span className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded animate-pulse flex items-center gap-1">
-                                   <span className="w-2 h-2 bg-white rounded-full"></span> LIVE REC
+                               <span className="bg-red-600/90 backdrop-blur text-white text-[10px] font-bold px-2 py-1 rounded animate-pulse flex items-center gap-1 shadow-lg">
+                                   <div className="w-1.5 h-1.5 bg-white rounded-full"></div> LIVE
+                               </span>
+                               <span className="bg-black/50 backdrop-blur text-slate-300 text-[10px] font-mono px-2 py-1 rounded border border-white/10">
+                                   {new Date().toLocaleTimeString()}
                                </span>
                            </div>
                        </div>
 
                        {/* Controls Bar */}
-                       <div className="h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-6">
+                       <div className="h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-between px-6 z-10">
                            <div className="flex items-center gap-4">
-                               <button onClick={() => setIsPlaying(!isPlaying)} className="text-slate-300 hover:text-white">
-                                   {isPlaying ? <Pause size={24}/> : <Play size={24}/>}
+                               <button 
+                                   onClick={() => setIsPlaying(!isPlaying)} 
+                                   className={`p-2 rounded-full transition-colors ${isPlaying ? 'bg-red-500/20 text-red-400' : 'hover:bg-slate-800 text-slate-300 hover:text-white'}`}
+                               >
+                                   {isPlaying ? <Pause size={20}/> : <Play size={20}/>}
                                </button>
-                               <div className="text-xs text-slate-500 font-mono">
-                                   {isPlaying ? 'STREAMING... (1 FPS MJPEG)' : 'PAUSED'}
+                               <div>
+                                   <div className="text-xs font-bold text-white">{selectedCam.product || 'Generic Camera'}</div>
+                                   <div className="text-[10px] text-slate-500 font-mono">
+                                       {isPlaying ? 'STREAMING (MJPEG PULL)' : 'PAUSED'}
+                                   </div>
                                </div>
                            </div>
                            <div className="flex items-center gap-4">
-                               <button onClick={toggleFullscreen} className="text-slate-400 hover:text-white" title="Fullscreen">
+                               <button onClick={toggleFullscreen} className="text-slate-400 hover:text-white transition-colors" title="Fullscreen">
                                    <Maximize2 size={20}/>
                                </button>
                                <a 
                                  href={`http://${selectedCam.ip}:${selectedCam.port}`} 
                                  target="_blank" 
                                  rel="noreferrer" 
-                                 className="text-slate-400 hover:text-cyan-400"
+                                 className="text-slate-400 hover:text-cyan-400 transition-colors"
                                  title="Open in Browser"
                                >
                                    <ExternalLink size={20}/>
@@ -268,63 +297,78 @@ const ShodanPage: React.FC = () => {
                   </div>
 
                   {/* Intel Sidebar */}
-                  <div className="w-full md:w-80 bg-slate-900 border-l border-slate-800 flex flex-col">
-                      <div className="p-4 border-b border-slate-800">
-                          <h2 className="font-bold text-white flex items-center gap-2">
-                              <Server size={18} className="text-cyan-500"/> Target Intel
+                  <div className="w-full md:w-80 bg-slate-900 border-l border-slate-800 flex flex-col md:h-full overflow-hidden">
+                      <div className="p-4 border-b border-slate-800 bg-slate-950/50">
+                          <h2 className="font-bold text-white flex items-center gap-2 text-sm">
+                              <Server size={16} className="text-cyan-500"/> TARGET INTEL
                           </h2>
                       </div>
                       
-                      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                      <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
                           {/* Mini Map */}
-                          <div className="h-40 bg-slate-800 rounded-lg overflow-hidden border border-slate-700 relative">
+                          <div className="h-40 bg-slate-800 rounded-lg overflow-hidden border border-slate-700 relative shadow-inner">
                                <MapContainer 
                                    center={[selectedCam.lat, selectedCam.lng]} 
                                    zoom={10} 
                                    style={{height: '100%', width: '100%'}} 
                                    zoomControl={false}
                                    attributionControl={false}
+                                   dragging={false}
                                >
                                    <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"/>
                                    <Marker position={[selectedCam.lat, selectedCam.lng]}/>
                                </MapContainer>
-                               <div className="absolute bottom-0 left-0 w-full bg-black/50 p-1 text-[10px] text-white text-center backdrop-blur-sm">
+                               <div className="absolute bottom-0 left-0 w-full bg-black/60 p-1 text-[10px] text-white text-center backdrop-blur-sm border-t border-slate-700">
                                    {selectedCam.city}, {selectedCam.country}
                                </div>
                           </div>
 
-                          {/* Details */}
-                          <div className="space-y-3 text-xs">
-                              <div className="flex justify-between border-b border-slate-800 pb-2">
-                                  <span className="text-slate-500">IP Address</span>
-                                  <span className="font-mono text-cyan-400">{selectedCam.ip}</span>
+                          {/* Network Details */}
+                          <div className="space-y-1">
+                              <h3 className="text-[10px] font-bold text-slate-500 uppercase mb-2">Network Configuration</h3>
+                              
+                              <div className="bg-slate-800/50 rounded p-2 flex justify-between items-center group cursor-pointer hover:bg-slate-800 transition-colors" onClick={() => copyToClipboard(selectedCam.ip)}>
+                                  <span className="text-xs text-slate-400">IP Address</span>
+                                  <div className="flex items-center gap-2">
+                                     <span className="font-mono text-cyan-400 text-xs">{selectedCam.ip}</span>
+                                     <Copy size={10} className="text-slate-600 group-hover:text-slate-400"/>
+                                  </div>
                               </div>
-                              <div className="flex justify-between border-b border-slate-800 pb-2">
-                                  <span className="text-slate-500">Port / Protocol</span>
-                                  <span className="font-mono text-white">{selectedCam.port} / TCP</span>
+
+                              <div className="bg-slate-800/50 rounded p-2 flex justify-between items-center">
+                                  <span className="text-xs text-slate-400">Port / Proto</span>
+                                  <span className="font-mono text-white text-xs">{selectedCam.port} / TCP</span>
                               </div>
-                              <div className="flex justify-between border-b border-slate-800 pb-2">
-                                  <span className="text-slate-500">Organization</span>
-                                  <span className="text-white text-right w-32 truncate">{selectedCam.org}</span>
+
+                              <div className="bg-slate-800/50 rounded p-2 flex justify-between items-center">
+                                  <span className="text-xs text-slate-400">Organization</span>
+                                  <span className="text-white text-xs text-right w-32 truncate" title={selectedCam.org}>{selectedCam.org}</span>
                               </div>
-                              <div className="flex justify-between border-b border-slate-800 pb-2">
-                                  <span className="text-slate-500">Last Seen</span>
-                                  <span className="text-white">{new Date(selectedCam.timestamp).toLocaleDateString()}</span>
+                              
+                              <div className="bg-slate-800/50 rounded p-2 flex justify-between items-center">
+                                  <span className="text-xs text-slate-400">Last Seen</span>
+                                  <span className="text-white text-xs">{new Date(selectedCam.timestamp).toLocaleDateString()}</span>
                               </div>
                           </div>
 
-                          {/* Raw Data */}
-                          <div className="bg-black/50 p-3 rounded border border-slate-800 font-mono text-[10px] text-green-500 overflow-x-hidden">
-                              <div className="opacity-50 mb-1">SHODAN_BANNER_GRAB:</div>
-                              <div className="break-all whitespace-pre-wrap max-h-32 overflow-y-auto custom-scrollbar">
-                                  {selectedCam.data ? selectedCam.data.trim() : 'No banner data available.'}
+                          {/* Raw Data Banner */}
+                          <div>
+                              <h3 className="text-[10px] font-bold text-slate-500 uppercase mb-2">Banner Grab</h3>
+                              <div className="bg-black p-3 rounded border border-slate-700 font-mono text-[10px] text-green-500 overflow-x-hidden relative group">
+                                  <div className="opacity-50 mb-1 select-none"># SHODAN_PAYLOAD</div>
+                                  <div className="break-all whitespace-pre-wrap max-h-32 overflow-y-auto custom-scrollbar">
+                                      {selectedCam.data ? selectedCam.data.trim() : 'No banner data available.'}
+                                  </div>
                               </div>
                           </div>
                       </div>
                       
-                      <div className="p-4 border-t border-slate-800">
-                          <button className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 rounded transition-colors flex items-center justify-center gap-2">
-                              <ShieldAlert size={14}/> VIEW FULL REPORT
+                      <div className="p-4 border-t border-slate-800 bg-slate-950/50">
+                          <button 
+                             onClick={() => copyToClipboard(JSON.stringify(selectedCam, null, 2))}
+                             className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-3 rounded transition-colors flex items-center justify-center gap-2 border border-slate-700"
+                          >
+                              <ShieldAlert size={14}/> EXPORT REPORT JSON
                           </button>
                       </div>
                   </div>

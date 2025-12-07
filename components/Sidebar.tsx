@@ -25,26 +25,43 @@ const AppSidebar: React.FC<SidebarProps> = ({ isOpen, onToggle, activeTab, onTab
 
   return (
     <>
-      {/* Mobile Toggle Trigger */}
-      <div 
-        className="fixed top-3 left-3 z-[9999] md:hidden p-3 bg-slate-900/90 backdrop-blur rounded-lg shadow-lg border border-slate-700 cursor-pointer text-white active:scale-95 transition-transform"
+      {/* Animated Mobile Toggle Button */}
+      <button 
         onClick={onToggle}
+        className="fixed top-3 left-3 z-[9999] md:hidden p-3 bg-slate-900/90 backdrop-blur-md rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.5)] border border-slate-700 text-cyan-400 hover:text-cyan-300 hover:border-cyan-500/50 transition-all duration-300 group active:scale-95"
+        aria-label="Toggle Menu"
       >
-        <Icon name={isOpen ? 'close' : 'bars'} size='large' inverted />
-      </div>
+        <div className="relative w-6 h-5">
+            <span 
+                className={`absolute left-0 w-full h-0.5 bg-current rounded-full transition-all duration-300 ease-in-out ${
+                    isOpen ? 'top-2.5 rotate-45' : 'top-0'
+                }`} 
+            />
+            <span 
+                className={`absolute left-0 top-2.5 w-full h-0.5 bg-current rounded-full transition-all duration-300 ease-in-out ${
+                    isOpen ? 'opacity-0 translate-x-4' : 'opacity-100'
+                }`} 
+            />
+            <span 
+                className={`absolute left-0 w-full h-0.5 bg-current rounded-full transition-all duration-300 ease-in-out ${
+                    isOpen ? 'top-2.5 -rotate-45' : 'top-5'
+                }`} 
+            />
+        </div>
+      </button>
 
       <SemanticSidebar
         as={Menu}
-        animation='overlay' // Changed to overlay for smoother mobile feel
+        animation='overlay'
         icon='labeled'
         inverted
         vertical
         visible={isOpen || window.innerWidth >= 768}
         width='thin'
-        className="!bg-slate-900 !border-r !border-slate-800 z-[9000] !w-64 md:!w-thin" // Fixed width for better mobile layout
+        className="!bg-slate-900 !border-r !border-slate-800 z-[9000] !w-64 md:!w-thin shadow-[4px_0_24px_rgba(0,0,0,0.4)]"
         style={{ position: 'fixed', top: 0, bottom: 0, left: 0, height: '100%', overflowY: 'auto' }}
       >
-        <div className="p-4 mb-2 border-b border-slate-800 flex flex-col items-center pt-8 md:pt-4">
+        <div className="p-4 mb-2 border-b border-slate-800 flex flex-col items-center pt-20 md:pt-4">
             <Shield className="text-cyan-500 w-10 h-10 mb-2 drop-shadow-[0_0_10px_rgba(6,182,212,0.5)]" />
             <span className="text-white font-bold tracking-wider text-lg">LANNA INTEL</span>
             <span className="text-[10px] text-slate-500 font-mono">OPS: ACTIVE</span>

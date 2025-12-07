@@ -1,8 +1,4 @@
 
-
-
-
-
 import { API_KEYS, API_URLS, CORS_PROXY, REGION_CENTER } from './config';
 import { 
   FlightData, WeatherData, WebcamData, ForecastData, GdeltEvent, TrafficIncident,
@@ -205,31 +201,57 @@ export const backfillFlightData = async (days: number): Promise<number> => {
 export const verifyFlightIntegrity = async (): Promise<FlightIntegrityReport> => {
     const flights = await dbService.getAll<FlightData>(STORES.FLIGHTS);
     const now = Date.now();
-    let invalid = 0;
-    let future = 0;
-    let duplicates = 0;
-    const seen = new Set<string>();
+    let invalidCount = 0;
+    let futureCount = 0;
+    let duplicateCount = 0;
     
-    flights.forEach(f => {
-        // Check 1: Timestamp Validity
+    const idsToRemove: string[] = [];
+    const seen = new Set<string>();
+
+    for (const f of flights) {
+        let remove = false;
         const ts = f.timestamp ? new Date(f.timestamp).getTime() : 0;
-        if (!ts || isNaN(ts)) invalid++;
-        
+
+        // Check 1: Timestamp Validity (null or NaN)
+        if (!ts || isNaN(ts)) {
+            invalidCount++;
+            remove = true;
+        } 
         // Check 2: Future Dates (Allow 1 hour drift)
-        if (ts > now + 3600000) future++;
-        
-        // Check 3: Duplicates
-        if (seen.has(f.id)) duplicates++;
-        seen.add(f.id);
-    });
+        else if (ts > now + 3600000) {
+            futureCount++;
+            remove = true;
+        }
+
+        // Check 3: Duplicates (Same ID encountered more than once)
+        // If it's already invalid, we remove it anyway, but we should track duplication logic on valid ones
+        if (!remove) {
+             if (seen.has(f.id)) {
+                 duplicateCount++;
+                 remove = true;
+             } else {
+                 seen.add(f.id);
+             }
+        }
+
+        if (remove) {
+            idsToRemove.push(f.id);
+        }
+    }
+
+    // Execute Repairs: Remove collected IDs
+    if (idsToRemove.length > 0) {
+        await Promise.all(idsToRemove.map(id => dbService.delete(STORES.FLIGHTS, id)));
+        logger.info(`FlightIntegrity: Removed ${idsToRemove.length} corrupted records.`, 'System');
+    }
     
     return {
-        totalRecords: flights.length,
-        invalidTimestamps: invalid,
-        futureTimestamps: future,
-        duplicates: duplicates,
+        totalRecords: flights.length - idsToRemove.length,
+        invalidTimestamps: invalidCount,
+        futureTimestamps: futureCount,
+        duplicates: duplicateCount,
         gapsFilled: 0,
-        status: (invalid + future + duplicates) === 0 ? 'clean' : 'repaired'
+        status: idsToRemove.length === 0 ? 'clean' : 'repaired'
     };
 };
 
